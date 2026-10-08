@@ -1,0 +1,265 @@
+-----------------------------------------------
+#block 1
+-----------------------------------------------
+def route_load(route, q):
+    total_load = 0
+    for i in route:
+        total_load = total_load + q[i]
+    return total_load
+  
+  
+-----------------------------------------------
+#block 2
+-----------------------------------------------    
+    
+def compute_schedule(route, coord, a, b, s):
+    T = {}
+
+    # Step 1: Start service at the first node
+    first_node = route[0]
+    T[first_node] = max(0.0, a[first_node])
+
+    # Step 2: Move through the route one arc at a time
+    for idx in range(1, len(route)):
+
+        # Previous node and current node
+        prev = route[idx - 1]
+        cur = route[idx]
+
+        # Step 3: Compute arrival time at current node
+        travel_time = distance(coord, prev, cur)
+        arrival_time = T[prev] + s[prev] + travel_time
+
+        # Step 4: If vehicle arrives early, it waits
+        if arrival_time < a[cur]:
+            service_start_time = a[cur]
+        else:
+            service_start_time = arrival_time
+
+        T[cur] = service_start_time
+
+        # Step 5: Check latest service time
+        if T[cur] > b[cur]:
+            return False, T
+
+    # Step 6: If all nodes satisfy time windows, route is feasible
+    return True, T    
+    
+-----------------------------------------------
+#block 3
+-----------------------------------------------    
+routes = []
+
+    # Customers not yet assigned to any route
+    unserved = C.copy()
+
+    # Keep building routes until all customers are served
+    while len(unserved) > 0:
+
+        # Start a new empty route
+        current_route = [o, d]
+
+        # This flag checks whether we added at least one customer in this route
+        added_customer_to_this_route = True
+
+        # Keep trying to add customers to the current route
+        while added_customer_to_this_route:
+
+            added_customer_to_this_route = False
+
+            # Go through all currently unserved customers in lexicographic order
+            for customer in unserved.copy():
+
+                # Try to add this customer just before the end depot
+                trial_route = current_route[:-1] + [customer] + [d]
+
+                # Check capacity and time-window feasibility
+                --------------------------------------------fill
+
+                if feasible:
+                    # Accept the customer in the current route
+                    current_route = trial_route
+
+                    # Remove customer from unserved list
+                    unserved.remove(customer)
+
+                    # Since we added one customer, continue scanning again
+                    added_customer_to_this_route = True
+
+                    # Stop this scan and restart from the first unchecked customer
+                    break
+
+        # If the route has at least one customer, add it to the solution
+        if len(current_route) > 2:
+            -----------------------------------fill
+        else:
+            # This means no remaining customer can be served even alone
+            raise ValueError("No feasible customer could be added to a new route. Check data.")
+
+
+-----------------------------------------------
+#block 4
+-----------------------------------------------                
+            
+def route_cost(route, coord):
+    total_cost = 0
+
+    # Go through the route one arc at a time
+    for i in range(len(route) - 1):
+
+        # Current node
+        current_node = route[i]
+
+        # Next node in the route
+        next_node = route[i + 1]
+
+        # Add distance from current node to next node
+        total_cost = total_cost + distance(coord, current_node, next_node)
+
+    return total_cost            
+    
+-----------------------------------------------
+#block 5
+-----------------------------------------------     
+print("Routes constructed:", len(routes))
+
+    if len(routes) > Kmax:
+        print("WARNING: heuristic used more vehicles than available.")
+        print("Vehicles used:", len(routes), "Available:", Kmax)
+
+    total_cost = 0.0
+
+    for r_idx, route in enumerate(routes, start=1):
+        feasible, T = compute_schedule(route, coord, a, b, s)
+        cost = ------------------------------------fill
+        load = route_load(route, q)
+        total_cost += cost
+
+        route_original = [original_id[i] for i in route]
+
+        print(f"\nRoute {r_idx}: {route}")
+        print(f"Solomon IDs: {route_original}")
+        print(f"Load: {load:.2f}")
+        print(f"Cost: {cost:.2f}")
+        print(f"Feasible: {feasible}")
+
+        for node in route:
+            print(f"  T[{node}] = {T[node]:.2f}")
+
+    print("\nTotal cost:", round(total_cost, 2))    
+    
+-----------------------------------------------
+#block 6
+-----------------------------------------------     
+def route_is_feasible(route, Q, coord, q, a, b, s):
+    # Check capacity
+    load = route_load(route, q)
+
+    if load > Q:
+        return False
+
+    # Check time windows
+    feasible, T = compute_schedule(route, coord, a, b, s)
+
+    if feasible == False:
+        return False
+
+    return True    
+    
+-----------------------------------------------
+#block 7
+-----------------------------------------------  
+
+def relocate_local_search(routes, Q, coord, q, a, b, s):
+    improved = True
+
+    while improved == True:
+
+        improved = False
+
+        # Try moving a customer from one route to another route
+        for r1_index in range(len(routes)):
+
+            for r2_index in range(len(routes)):
+
+                # Do not move within the same route in this simple version
+                if r1_index == r2_index:
+                    continue
+
+                route1 = routes[r1_index]
+                route2 = routes[r2_index]
+
+                old_cost = route_cost(route1, coord) + route_cost(route2, coord)
+
+                # Try removing one customer from route1
+                # Position 0 is start depot and last position is end depot
+                for remove_pos in range(1, len(route1) - 1):
+
+                    customer = route1[remove_pos]
+
+                    # Remove customer from route1
+                    new_route1 = []
+
+                    for pos in range(len(route1)):
+                        if pos != remove_pos:
+                            new_route1.append(route1[pos])
+
+                    # Try inserting this customer into every position of route2
+                    # insert_pos = 1 means after start depot
+                    # insert_pos = len(route2)-1 means before end depot
+                    for insert_pos in range(1, len(route2)):
+
+                        new_route2 = []
+
+                        # Copy nodes before insertion position
+                        for pos in range(insert_pos):
+                            new_route2.append(route2[pos])
+
+                        # Insert the customer
+                        new_route2.append(customer)
+
+                        # Copy remaining nodes
+                        for pos in range(insert_pos, len(route2)):
+                            new_route2.append(route2[pos])
+
+                        # Check whether both new routes are feasible
+                        feasible1 = -----------------------------------------fill
+                        feasible2 = -----------------------------------------fill
+
+                        if feasible1 == False or feasible2 == False:
+                            continue
+
+                        # Compute new cost
+                        new_cost = route_cost(new_route1, coord) + route_cost(new_route2, coord)
+
+                        # If cost improves, accept the move
+                        if new_cost < old_cost:
+
+                            routes[r1_index] = ------------- fill
+                            routes[r2_index] = -------------fill
+
+                            # If route1 has become empty, remove it
+                            if len(routes[r1_index]) == 2:
+                                routes.pop(r1_index)
+
+                            print("\nRelocate move accepted")
+                            print("Moved customer:", customer)
+                            print("From route:", r1_index + 1)
+                            print("To route:", r2_index + 1)
+                            print("Old cost:", round(old_cost, 2))
+                            print("New cost:", round(new_cost, 2))
+
+                            improved = True
+                            break
+
+                    if improved == True:
+                        break
+
+                if improved == True:
+                    break
+
+            if improved == True:
+                break
+
+    return routes    
+
