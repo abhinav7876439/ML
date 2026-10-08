@@ -1,7 +1,0 @@
-For the Branch-and-Price hands-on lecture tomorrow, we will be using the GCG platform. Kindly come prepared with the installation.
-
-GCG can be directly installed only on Linux/Mac OS. If you are a Windows user, as a first step, install a Linux virtual machine or Windows Subsystem for Linux (WSL). Once you have a Linux/Mac OS environment, install the SCIP Optimization Suite. Detailed installation instructions are available here: https://scipopt.org/#scipoptsuite. Make sure you choose the Linux/Mac OS source files for installation and the corresponding installation instructions. It is not necessary to install the Python interface PySCIPOpt. Once the SCIP Optimization Suite is installed, you can proceed with building GCG. I suggest you follow the “easy installation steps” found here: https://gcg.or.rwth-aachen.de/doc-3.5.0/easy-install.html.
-
-After you have installed SCIP, you should have a folder named scipoptsuite-x.x.x. Once you are in the folder, you can continue from Step 3. After the installation is done, test it using the command make test. You can now use GCG by changing to the folder scipoptsuite-x.x.x/gcg/bin and executing the command ./gcg. Alternatively, you can call gcg from anywhere if you set up the path variables.
-
-The commands for reading a problem into the GCG suite and executing it are also available on the website, but we will discuss this in class.
