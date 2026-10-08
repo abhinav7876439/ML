@@ -1,0 +1,17 @@
+We will practice developing and solving nonlinear optimization models. We will
+use open-source modeling tool Pyomo, based on Python and open-source solver
+Ipopt for solving. Participants are expected to have a laptop with internet
+connection and a google-account (gmail for example) to run Google-Colab. No
+additional installation is required. Participants should run the following
+test code before the session to check their setup:
+
+1. Open the link https://drive.google.com/drive/u/0/folders/19IzBfk1p8i-qcT5J2WCOJUAJVhVGQyo1
+  or go to LSO 2026 materials page tinyurl.com/LSO2026 then LSO 2026 Main Programme -> June 4 -> Session 4
+
+2. Double click 00-test.ipynb to open the python notebook in google colab
+
+3. Click at Run-all and check if you see the solution at the bottom of the page.
+
+Advanced users are encouraged to install ipopt and pyomo on their laptop and run it
+natively. Link to ipopt binary for linux is available in the above notebook.
+Pyomo is available in pip and conda.

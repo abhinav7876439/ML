@@ -1,0 +1,13 @@
+City Name,Location,Year,Month,Monthly_mean_average_concentration_PM2.5,Monthly_mean_concentration_PM10,Monthly_mean_concentration_NO2,Monthly_mean_concentration_SO2,Monthly_mean_concentration_O3,No_of_AQM_Sensors_deployed
+Surat,Varachha,2019,1,84.24,212.89,19.53,7.76,10.74,1
+Surat,Varachha,2019,2,65.22,154.09,10.26,8.32,7.09,1
+Surat,Varachha,2019,3,43.07,90.91,9.56,7.96,8.82,1
+Surat,Varachha,2019,4,44.97,94.97,6.71,11.64,5.89,1
+Surat,Varachha,2019,5,45.00,94.99,4.95,4.45,2.44,1
+Surat,Varachha,2019,6,44.95,94.86,3.71,4.04,1.06,1
+Surat,Varachha,2019,7,518.32,1096.70,39.27,60.38,8.23,1
+Surat,Varachha,2019,8,44.99,94.97,1.98,6.80,0.26,1
+Surat,Varachha,2019,9,44.91,94.92,3.35,10.05,0.35,1
+Surat,Varachha,2019,10,45.10,94.89,6.06,10.66,2.42,1
+Surat,Varachha,2019,11,45.00,95.00,9.41,10.23,3.11,1
+Surat,Varachha,2019,12,45.00,95.01,10.51,8.55,2.99,1

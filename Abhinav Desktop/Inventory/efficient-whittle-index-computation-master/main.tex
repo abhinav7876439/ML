@@ -1,0 +1,1418 @@
+\documentclass[acmsmall,screen,anonymous]{acmart}
+
+%% \BibTeX command to typeset BibTeX logo in the docs
+% \AtBeginDocument{%
+%   \providecommand\BibTeX{{%
+%     \normalfont B\kern-0.5em{\scshape i\kern-0.25em b}\kern-0.8em\TeX}}}
+
+%% Rights management information.  This information is sent to you
+%% when you complete the rights form.  These commands have SAMPLE
+%% values in them; it is your responsibility as an author to replace
+%% the commands and values with those provided to you when you
+%% complete the rights form.
+
+\setcopyright{acmcopyright}
+\copyrightyear{2022}
+\acmYear{2022}
+%\acmDOI{10.1145/1122445.1122456}
+
+%% These commands are for a PROCEEDINGS abstract or paper.
+\acmConference[Woodstock '18]{Woodstock '18: ACM Symposium on Neural
+  Gaze Detection}{June 03--05, 2018}{Woodstock, NY}
+%\acmBooktitle{Woodstock '18: ACM Symposium on Neural Gaze Detection,
+%  June 03--05, 2018, Woodstock, NY}
+%\acmPrice{15.00}
+%\acmISBN{978-1-4503-XXXX-X/18/06}
+
+%\documentclass[a4paper,12pt]{article}
+%\usepackage[margin=1in]{geometry}
+%\usepackage[subpreambles=true]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{enumitem}
+\usepackage[english]{babel}
+% \usepackage{url,csquotes}
+% \usepackage[dvipsnames]{xcolor}
+% \usepackage[colorlinks=true,citecolor=blue,linkcolor=red]{hyperref}
+% \usepackage[square]{natbib}
+\usepackage{import}
+%\usepackage{fancyhdr}
+\usepackage{mathrsfs}
+\usepackage{MnSymbol}
+\input{./mdp_header.tex}
+%\usepackage{amssymb,amsfonts,amsmath,amsthm}
+\usepackage{bm} % for boldsymbol
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{matrix,backgrounds}
+%\usepackage{lmodern} % incompatible with acmart class
+
+\graphicspath{{}{figures/}}
+
+\bibliographystyle{ACM-Reference-Format}
+%\bibliography{bibfile}
+
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\SetKwProg{Init}{Init.}{}{}
+\newcommand\algocomment[1]{{\hfill\it \# #1}}
+
+%\setlength{\marginparwidth}{2cm}
+\usepackage[textwidth=\linewidth]{todonotes}		% for todo's
+\renewcommand{\NG}[1]{\todo[color=blue!10,author=\textbf{\small NG},inline]{\small #1\\}}
+\newcommand{\BG}[1]{\todo[color=red!10,author=\textbf{\small BG},inline]{\small #1\\}}
+\newcommand{\KK}[1]{\todo[color=green!10,author=\textbf{\small KK},inline]{\small #1\\}}
+
+\title[Whittle Index]{Computing Whittle (and Gittins) Index in Subcubic Time}
+%\author{Paper \#9}% -- Anonymous}
+
+% \authornote{Both authors contributed equally to this research.}
+% \email{trovato@corporation.com}
+% \orcid{1234-5678-9012}
+% \author{G.K.M. Tobin}
+% \authornotemark[1]
+% \email{webmaster@marysville-ohio.com}
+% \affiliation{%
+%   \institution{Institute for Clarity in Documentation}
+%   \streetaddress{P.O. Box 1212}
+%   \city{Dublin}
+%   \state{Ohio}
+%   \country{USA}
+%   \postcode{43017-6221}
+% }
+% \author{Nicolas GAST \\ Bruno GAUJAL \\ Kimang KHUN}
+% \date{\today}
+
+\begin{document}
+
+
+\begin{abstract}
+    Whittle index is a generalization of Gittins index that provides very efficient allocation rules for restless multi-armed bandits. In this paper, we develop an algorithm to test the indexability and compute the Whittle indices of any finite-state Markovian bandit problem. This algorithm works in the discounted and non-discounted cases.  As a byproduct, it can also be used to compute Gittins index. Our algorithm builds on three tools: (1) a careful characterization of Whittle index that allows one to compute recursively the $k$th smallest index from the $(k-1)$th smallest, and to test indexability, (2) the use of Sherman-Morrison formula to make this recursive computation efficient, and (3) a sporadic use of fast matrix inversion and multiplication to obtain a subcubic complexity. We show that an efficient use of the Sherman-Morrison formula leads to an algorithm that computes Whittle index in $(2/3)n^3 + o(n^3)$ arithmetic operations, where $n$ is the number of states of the arm.  The careful use of fast matrix multiplication leads to the first subcubic algorithm to compute Whittle (or Gittins) index. By using the current fastest matrix multiplications, our algorithm runs in $O(n^{2.5286})$. We also conduct a series of experiments that demonstrate that our algorithm is very efficient in practice and can compute indices of Markov chains with several thousands of states in a few seconds.
+\end{abstract}
+
+\maketitle
+
+\newtheorem{thm}{Theorem}
+\newtheorem{lem}[]{Lemma}
+\newtheorem{asmp}[]{Assumption}
+\newtheorem{prob}[]{Problem}
+%\theoremstyle{definition}
+%\newtheorem{definition}[]{Definition}
+
+
+
+\section{Introduction}
+\label{sec:intro}
+
+Markovian bandits form a subclass of multi-armed bandit problems in which each arm has an internal state that evolves over time in a Markovian manner, as a function of the decision maker's actions.  In such a problem, at each time step, the decision maker observes the state of all arms and chooses which one to activate. If each arm has up to $n$ states, then an $M$-arm problem can be represented by a Markov decision process (MDP) with $n^M$ states.  When the state of an arm evolves only when this arm is chosen, one falls into the category of \emph{rested} Markovian bandits for which an optimal policy (in the discounted case) was found by Gittins \cite{gittinsBanditProcessesDynamic1979a}.  When the state of an arm can also evolve when the arm is not chosen, the problem is called a \emph{restless bandit} problem, and computing an optimal policy is a difficult problem \cite{papadimitriou1994complexity}.
+% I would rather say "... computing an optimal policy is a NP-hard problem \cite{...}"
+
+In his seminal paper \cite{whittle1988restless}, Whittle proposed a very efficient heuristic: For each arm, an index function maps each state of this arm to a real number, the Whittle index policy then consists in activating the arms having the highest index first. This heuristic generalizes Gittins index to restless bandits. Contrary to the rested case, the Whittle index policy is in general not optimal. Yet, this policy has been proven to be very efficient over the years: up to a condition called \emph{indexability}, Whittle index has been shown to be (in the undiscounted case) asymptotically optimal as the number of arms grows to infinity \cite{lott2000optimality, weber1990index}. Moreover, the heuristic performs extremely well in practice \cite{glazebrook2006some, ansell2003whittle, glazebrook2002index}. Restless bandits and Whittle index have been applied to many scheduling and resource allocation problems such as wireless communication \cite{aalto2019whittle, liu2010indexability}, web crawling \cite{avrachenkov2020whittle, nino2014dynamic}, congestion control \cite{avrachenkov2013congestion, avrachenkov2018impulsive}, queueing systems \cite{scully2018soap, aalto2011properties,aalto2009gittins,borkar2017whittle, larranaga2015asymptotically, archibald2009indexability, glazebrook2009index}, and clinical trials \cite{villar2015multi}. 
+
+The good performance of Whittle index for indexable bandits raises two important questions:
+\begin{center}
+\bfseries
+Is there an efficient algorithm to test indexability and compute Whittle index?\\Is Whittle index harder to compute than Gittins index?
+\end{center}
+
+\paragraph*{Related work}
+The computation of Gittins index has received a lot of attention in the past, see for instance \cite{chen1986linear, katehakis1987multi, nino-moraFastPivotingAlgorithmGittins2007, sonin2008generalized} and the recent survey \cite{chakravortyMultiArmedBanditsGittins2014}. For a $n$-state Markovian bandit, the algorithm having the smallest complexity is the \emph{fast-pivoting} implementation of \cite{nino-moraFastPivotingAlgorithmGittins2007} that performs $(2/3)n^3+O(n^2)$ arithmetic operations. Note that the same author claims in page $4$ of \cite{nino2020fast} that it is unlikely that this complexity can be improved. As we see later, we do improve upon this complexity. 
+
+
+The situation of Whittle index is more contrasted. To the best of our knowledge, there is no general purpose algorithm to test indexability, and most papers studying Whittle index either assume that the studied model is indexable or focus on specific classes of restless bandits for which the structure can be used to show indexability, see \emph{e.g.} \cite{aalto2011properties,akbarzadeh2019restless,akbarzadeh2021maintenance,borkar2017whittle}.  Assuming indexability, the computation of Whittle index has been considered by a few papers.
+
+% for which authors consider closed-form Whittle index formula when the optimal policy is threshold-based. The same authors prove the indexability of scheduling maintenance problem for a collection of machines and also derive a closed-form expression for Whittle index \cite{}.
+%The efficient numerical computation for Whittle index is recently considered in \cite{nino2020fast} which provides an algorithm, called \emph{fast-pivoting} algorithm, that performs in $(2/3)n^3+O(n^2)$ multiplications\footnote{See footnote \ref{fn:note1}.} if the initialization phase is excluded from the count.
+
+For restless bandits with discount, $\beta\in(0,1)$, the most efficient numerical algorithm to compute Whittle index was recently presented in \cite{nino2020fast}. This algorithm, called \emph{fast-pivoting} algorithm,  performs $(2/3)n^3+O(n^2)$ arithmetic operations\footnote{multiplications and additions of real numbers, regardless of their values} if the initialization phase is excluded from the count.
+This is done by using the parametric simplex method and  exploiting the special structure of this linear system to  reduce the complexity of simplex pivoting steps. This fast-pivoting algorithm is an efficient implementation of adaptive-greedy algorithm \cite{nino2007dynamic} which outputs Whittle index if and only if the restless bandit satisfies a technical condition called partial conservation law (PCL), which is  more restrictive than just being indexable. So, it is not applicable for all indexable restless bandits.
+%Also, the algorithm is only designed for discounted restless bandit and no explicit form of computations is given for non-discounted restless bandit, $\beta=1$.
+Based on a geometric interpretation of Whittle index, the authors in \cite{akbarzadeh2020conditions} propose a refinement of the adaptive-greedy algorithm of \cite{nino2007dynamic} to compute Whittle indices of all indexable restless bandits. The refined algorithm achieves a  $O(n^3)$ complexity  by using the  Sherman-Morrison formula. The authors also propose several checkable conditions  to  test  indexability. These conditions are not necessary for indexability, which means that if an arm does not verify the conditions, we cannot conclude that the arm is non-indexable and an algorithm to check indexability is still needed. Also, no detailed description is given for adapting these conditions and their algorithm to restless bandit without discount. A thorough comparison between our algorithm and \cite{akbarzadeh2020conditions,nino2020fast} is given in Appendix~\ref{apx:comparison}. 
+While computing the Whittle indices of a known arm's model is still a challenge, there is interesting work in trying to learn Whittle index when only the arm's simulator is given and the arm's model is unknown. For instance, \cite{avrachenkov2020whittle, fu2019towards} use Q-learning algorithm to estimate Whittle index as time evolves in finite-state restless bandit problems. Moreover,
+the work of \cite{nakhleh2022neurwin} uses deep reinforcement learning framework to estimate the Whittle indices of the arms with large state space or convoluted transition kernel. With "strongly indexable" property introduced by the authors, deadline scheduling, recovering bandits, and wireless scheduling problems are considered and their method numerically outperforms or matches state-of-the-art control policies in each of the three problems.
+
+For non-discounted restless bandit,  the author of \cite{nino2020fast} only provides a brief description of how the fast-pivoting algorithm given in the discounted case can be adapted although no explicit algorithm is given in that paper. For continuous-time $n$-state restless bandits, the work of \cite{ayesta2021computation} proposes an algorithm to check indexability and compute Whittle index with a complexity exponential in the number of states $n$ of each arm. According to Remark 4.1 of that paper, this complexity can be reduced to $O(n^5)$ if the restless bandit is known to be indexable and threshold-based policies are optimal. It is stated that their approach is not applicable for discounted restless bandits.
+
+
+\paragraph*{Contributions.} In this paper, we investigate Whittle index computation in restless bandit problems and present two main contributions. Our first contribution is to propose a unified algorithm that computes the Whittle indices of Markovian bandits for both discounted and non-discounted restless bandits. Our algorithm, which can be viewed as a refinement of the algorithm in \cite{akbarzadeh2020conditions}, detects whether the input problem is indexable and computes Whittle index if the problem is. As a byproduct, our algorithm can compute Gittins index in rested bandits which are a subclass of restless bandits.  This algorithm computes the indices in increasing order, and relies on an efficient the use of Sherman-Morrison formula to compute Whittle index in $(2/3)n^3 + O(n^2)$ plus the time to solve a linear system of order $n$, which is subcubic \cite{strassen1969gaussian}. This algorithm can detect on the fly if a computed index violates the indexability condition, which adds an extra $n^3/3+O(n^2)$ arithmetic operations. This later test is optional and therefore the complexity of the algorithm can be $n^3+o(n^3)$ or $(2/3)n^3 +o(n^3)$ depending on whether testing the indexability is needed or not.
+
+As a second contribution, we show how to reduce the complexity of the above algorithm to obtain the first subcubic algorithm to compute Whittle\footnote{It is also the first subcubic algorithm to compute Gittins index.} index. This improvement is made possible by the fact that a linear system can be solved in subcubic time. By carefully reordering the computations, we show that it is possible to reduce the use of the Sherman-Morrison formula at the price of solving more linear systems. The subcubic complexity comes by striking  a good balance between having too many or two few linear systems to solve. By using the matrix multiplication method having the current smallest complexity, our algorithm can test indexability and compute Whittle index in $O(n^{2.5286})$. 
+
+Finally, we present a detailed numerical study on the performance of our algorithm and compare it with some raw data taken from \cite{nino2020fast}. The reported results show that our algorithm is very efficient in computing Whittle index and testing indexability. Moreover, our simulations indicate that the subcubic version of our algorithm does not just have a theoretically small complexity but is also faster in practice than our original $(2/3)n^3$ algorithm. Testing the indexability and computing indices takes less than one second for $n=1000$ states and less than $10$ minutes for $n=15000$ states.
+
+\paragraph*{Road map.}
+The paper is organized as follows. We introduce the problem and recall the definition of Whittle index in Section~\ref{sec:bandits}. In Section~\ref{sec:widx_compute}, we characterize Whittle index and show how to use the Sherman-Morrison formula to compute it efficiently. We then show how to reduce the complexity of the algorithm by using fast matrix multiplication algorithms in Section~\ref{sec:subcubic algorithm}. We show how to adapt this approach to the discounted case in Section~\ref{sec:discounted}. We compare the different variants of our algorithm in Section~\ref{sec:numerical}. Finally, we conclude in Section~\ref{sec:conclusion}.
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Restless Markovian bandit and Indexability}
+\label{sec:bandits}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%In this section, we introduce the Restless Markovian bandit problem. We also recall the notion of Whittle index policy...
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Restless Bandit Process and Restless Multi-armed Bandit}
+\label{ssec:def}
+
+A discrete-time restless bandit process (RB) is a Markov decision process (MDP) with discrete state space $[n]:=\{1\dots n\}$ and binary action space $\{0, 1\}$, where $0$ denotes the action "rest" and $1$ denotes the action "activate". The time is discrete and the evolution is Markovian: If the MDP is in state $i$ and action $a$ is chosen, the decision maker earns an instantaneous reward $r^a_i$ and the process transitions to a new state $j$ with probability $P^a_{ij}$. We denote this  MDP by the couple $(\br,\bP)$.  A policy $\pi$ for a RB is a subset of $[n]$ such that the policy chooses to activate the process in state $i$ if $i\in\pi$. By abuse of notation, we note $\pi_i=1$ if $i\in\pi$ and $\pi_i=0$ if $i\not\in\pi$. 
+
+A restless multi-armed bandit problem is a finite collection of independent RBs (arms). At time $t$, the decision maker observes the state of all RBs, and chooses which RBs to activate. The decision maker then earns a reward that is the sum of the rewards of all RBs. This problem is called a multi-armed restless bandit. The name ``restless'' comes from the fact that an arm put at rest may still transition to a new state. Such a problem is notoriously difficult to solve, as its complexity grows exponentially with the number of arms. We next describe a very efficient heuristic to solve this problem, known as the Whittle index policy.
+
+\subsection{Indexability and Whittle index}
+
+Consider a RB process $(\br, \bP)$. For each $\lambda\in\R$, we define a $\lambda$-penalized RB whose transition matrix are the same as in the original RB and whose reward when taking action $a$ in state $i$ is $r^a_i - \lambda a$. The quantity $\lambda$ can be viewed as a penalty for taking the active action. We consider that a decision maker seeks to maximize the average gain over an infinite horizon (the discounted case will be discussed in Section~\ref{sec:discounted}).  To avoid the dependence on initial states, we assume that the RB is unichain\footnote{a RB is unichain if all policies induce a Markov chain with a unique stationary distribution (see \cite{putermanMarkovDecisionProcesses1994})}.
+
+For a given penalty $\lambda$, we denote by $\pi^*(\lambda)$ the minimal\footnote{Minimal for the inclusion order. Indeed, by Lemma~\ref{lem:structure_optimal}, if two policies $\pi$ and $\pi'$ are optimal for a given penalty $\lambda$, then the intersection $\pi\cap\pi'$ is also optimal. Hence, the minimal optimal policy is the intersection of all optimal policies. } policy that is optimal for a given penalty $\lambda$.  When the penalty $\lambda$ is very large, activating is highly penalized, in which case the optimal policy is to put all states to rest: $\pi=\emptyset$. At the opposite, when the penalty is very low, activating highly subsidized, in which case the optimal policy is to activate all states: $\pi=[n]$. A process is said to be indexable when the optimal policy $\pi^*(\lambda)$ is a strictly decreasing function of the penalty $\lambda$. More precisely, we define the indexability as follows:
+\begin{definition}[Indexability]
+    \label{def:indexability}
+    An RB $(\br,\bP)$ is indexable if for all state $i\in[n]$, there exists a critical penalty $\lambda_i$ such that the action "activate" is optimal in state $i$ for the penalty $\lambda$ if and only if $\lambda\le\lambda_i$. In this case, we call $\lambda_i$ the Whittle index of state $i$.
+\end{definition}
+For an indexable RB, the minimal optimal policy for the penalty $\lambda$ is the set of states whose index is strictly higher than $\lambda$: $\pi^*(\lambda)=\{i : \lambda < \lambda_i\}$. Note that the policy $\pi^*(\lambda)$ is not necessary the unique optimal policy. In particular, for a penalty equal to the Whittle index $\widx_i$ of state $i$ both the action rest and activate are optimal in state $i$.
+
+
+\subsection{Characterization of indexability}
+
+For a given policy $\pi$ and a given penalty $\lambda$, we denote by $g^\pi(\lambda)$ the average gain\footnote{Note that as we assume that the RB is unichain, the average gain exists and does not depend on the state \cite{putermanMarkovDecisionProcesses1994}.} of the policy $\pi$ for the $\lambda$-penalized RB. We denote by $g^*(\lambda)=\max_{\pi\subset[n]}g^\pi(\lambda)$ the optimal average gain for the penalty $\lambda$.
+\begin{lemma}
+    \label{lem:indexable}
+    A RB is indexable if and only if there is a non decreasing sequence of values $\mu^0=-\infty<\mu^1\le\mu^2\le\dots\le\mu^n<\mu^{n+1}=+\infty$ and a sequence of policies $\pi^1=[n]\supsetneq\pi^2\supsetneq\dots\supsetneq\pi^n=\emptyset$ such that $\pi^k$ is an optimal policy for all penalty $\lambda\in[\mu^{k-1},\mu^{k}]$ and the minimal optimal policy for all $\widx\in[\mu^{k-1},\mu^k)$ if $\mu^{k-1}\ne\mu^{k}$.
+
+    Moreover, if the RB is indexable, then the index of state $i$ is $\mu^k$, where $k$ is such that $i \in \pi^{k-1}\setminus \pi^{k}$.
+\end{lemma}
+\begin{proof}
+    The lemma is a direct consequence of the definition of indexability.  Indeed, assume first that there exist sequences $\mu$ and $\pi$ that satisfy the condition of the lemma. For a state $i$, let $\lambda_i := \mu^k$, where $k$ is such that $i \in \pi^{k-1}\setminus \pi^{k}$. Then, $\lambda_i$ satisfies all conditions of the critical penalty of Definition~\ref{def:indexability}.  This implies that the problem is indexable. Assume now that the problem is indexable, and let $\sigma^k$ be the state with the $k$th smallest index (where ties are broken arbitrarily). Let $\mu^k:=\lambda_{\sigma^k}$ be the index of the state $\sigma^k$ and define the policy $\pi^{k+1}=[n]\setminus\{\sigma^1,\dots, \sigma^k\}$. Then the sequences $\mu^k$ and $\pi^k$ satisfy the conditions of the lemma. 
+\end{proof}
+
+\begin{figure}[ht]
+    \begin{tabular}{cc}
+        \begin{subfigure}[t]{0.48\linewidth}
+            \includegraphics[width=\linewidth]{illustrate_vf}
+            \caption{Indexable RB with $4$ states}
+            \label{fig:illustrate_vf}
+        \end{subfigure}
+        &\begin{subfigure}[t]{0.48\linewidth}
+            \includegraphics[width=\linewidth]{illustrate_non_idx3}
+            \caption{Non-indexable RB with $3$ states}
+            \label{fig:illustrate_non_indexable}
+        \end{subfigure}            
+    \end{tabular}
+    \caption{Gain as a function of penalty for two examples, one which is indexable (Figure~\ref{fig:illustrate_vf}) and other one which is not (Figure~\ref{fig:illustrate_non_indexable}).}
+    \label{fig:illustrate_indexability}
+\end{figure}
+To illustrate Lemma~\ref{lem:indexable}, we show in Figure~\ref{fig:illustrate_indexability} two RBs: one indexable (on the left) and one non-indexable (on the right). In both figures, we plot in dashed-dot black line the average gain $g^\pi(\lambda)$ as a function of $\lambda$ for all policies $\pi\subset[n]$ (there are $2^4 = 16$ of them). We also plot in solid red the gain of the optimal policy. In Figure~\ref{fig:illustrate_vf}), we observe that the sequence of optimal policies is decreasing: $\{1,2,3,4\}\supset\{1,2,3\}\supset\{1,2\}\supset\{2\}\supset\emptyset$, which means that this problem is indexable. The vertical red lines represent the indices of all states: for a given $\lambda$, the optimal policy (written in red) is to activate the process at all states whose $\lambda_i$ is greater than the penalty $\lambda$. For Figure~\ref{fig:illustrate_non_indexable}, the sequence of optimal policies is $\{1,2,3\}\supset\{1,2\}\supset\{1\}\subset\{1,3\}\supset\{3\}\supset\emptyset$: this example is not indexable because of what happens around $\lambda\approx 0.7$: it is optimal to put $3$ at rest when $\lambda\in[0.41,0.66]\cup[0.71,+\infty]$ but not when $\lambda\in[0.66,0.71]$.
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Condition for Indexability and Whittle Index Computation}
+\label{sec:widx_compute}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+This section aims at providing a basic algorithm to detect whether an arm is indexable or not and if it is the case, compute the Whittle index of any state $i$ of the arm.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Overview of the Algorithm}
+\label{ssec:informal_widx_algo}
+
+Our algorithm computes Whittle index in increasing order by navigating through the optimal gain and using the characterization provided by Lemma~\ref{lem:indexable}. It follows the graphical construction given in Figure \ref{fig:illustrate_vf}. It also uses the following facts:
+\begin{itemize}
+    \item For a given policy $\pi$, the gain $g^\pi(\lambda)$ is an affine function of $\lambda$. As a result, it is possible to compute the penalty $\lambda$ at which two curves $g^{\pi}(\lambda)$  and $g^{\pi'}(\lambda)$ intersect.
+    \item For an indexable RB, computing the index can be done by a greedy algorithm that constructs a sequence of penalties $\mu^1_{\min}\le\mu^2_{\min}\le\dots\le\mu^n_{\min}$ and a sequence of policies $\pi^1\supsetneq\dots\supsetneq\pi^n$ by looking at where $g^{\pi^k}(\lambda)$ and $g^{\pi^k\setminus\{i\}}(\lambda)$ intersect for all $i\in\pi^k$.
+    \item The RB is indexable if and only if for all $k$, $\pi^k$ is an optimal policy for penalty $\mu^k$. 
+\end{itemize}
+
+
+This leads to Algorithm~\ref{algo:whittle_informal}, that we write in pseudo-code. % The algorithm will be made efficient that each of this point can be implemented at low cost.
+This algorithm relies on two subroutines: on Line~\ref{algo1:next_mu}, to compute the next index and on Line~\ref{algo1:test2} to test if a policy is optimal. We will describe later in the paper how to implement these functions in an efficient manner.  Note that in all the paper, we use the superscript $k$ (\emph{e.g.}, $\pi^k$ or $\mu^k$) to refer to the quantities computed at iteration $k$. We use the subscripts $i$ or $j$ (\emph{e.g.}, $\pi_i, \widx_i, \mu_i, \pi_j$) to refer to the quantities related to states $i$ or $j$.
+\begin{algorithm}[ht]
+    \DontPrintSemicolon
+    Set $\pi^1:=[n], k:=1$, and $\mu^0_{\min}:=-\infty$\;
+    \For{$k=1$ to $n$}{
+        \For{$i\in \pi^k$\label{algo1:inside_for}}{
+            Let $\mu_i^k = \inf\{\lambda : g^{\pi^k}(\lambda) = g^{\pi^k\setminus\{i\}}(\lambda)\}$\label{my_line} \;\label{algo1:next_mu}
+        }
+        \If{$\argmin_{i\in\pi^k \colon \mu_i^k\ge \mu_{\min}^{k-1}}\mu_i^k=\emptyset$\label{algo1:test1}}{
+            \Return{The problem is not indexable}
+        }
+        Let $\sigma^k:=\argmin_{i\in\pi^k \colon \mu_i^k\ge \mu_{\min}^{k-1}}\mu_i^k$ and $\widx_{\sigma^k}:=\mu^k_{\min} := \mu_{\sigma^k}^k$\; \label{algo1:sigma^k}
+        \If{$\pi^k$ is not an optimal policy for the penalty $\mu^k_{\min}$\label{algo1:test2}}{
+            \Return{The problem is not indexable}
+        }
+        Set $\pi^{k+1} := \pi^{k} \setminus\{\sigma^k\}$ \label{algo1:pik}\;
+    }
+    \Return{The problem is indexable and the indices are $\lambda$.}
+    \caption{Test indexability and compute Whittle index if the problem is indexable.}
+    \label{algo:whittle_informal}
+\end{algorithm}
+
+To illustrate how the algorithm works, we plot the first three iterations in Figure~\ref{fig:illustrate_algo} for the RB represented in Figure~\ref{fig:illustrate_vf}. The optimal policy for small $\lambda$ is $\pi=[n]$ so the first iteration starts with $\pi^1=\{1,2,3,4\}$ and computes the equation of the affine function $g^{\pi^1}(\cdot)$. We then compute the equations of the affine functions $g^{\pi^1{\setminus}\{i\}}(\cdot)$ for $i\in\pi^1$. This is represented in Figure~\ref{fig:iteration1}. We observe that $g^{\pi^1{\setminus}\{4\}}(\cdot)$ is the first affine function to cross $g^{\pi^1}(\cdot)$ at $\mu^1_{min}=\lambda_4\approx0.9$. After that, we set $\pi^2=\{1,2,3\}$ and compute the equation of the affine functions $g^{\pi^2{\setminus}\{i\}}(\cdot)$ for $i\in\pi^2$ and use them to compute $\mu^2_{min}=\lambda_3\approx0.21$ (Figure~\ref{fig:iteration2}). We then continue with the affine functions $g^{\{2\}}(\cdot)$  and $g^{\{1\}}(\cdot)$ (note that $g^{\{1\}}(\cdot)$ is not visible on the figure because $g^{\{1\}}(\lambda)<0.35$ for $\lambda\in[0,0.3]$, see Figure~\ref{fig:illustrate_vf}). We find $\mu^3_{min}=\lambda_1\approx0.28$ (\figurename~\ref{fig:iteration3}). We are left with the last iteration (not shown here) to compute the intersection between $g^{\{2\}}(\lambda)$ and $g^{\emptyset}(\lambda)$ which occurs at $\mu^4_{min}=\lambda_2\approx0.57$ (see Figure~\ref{fig:illustrate_vf}).
+
+\begin{figure}[ht]
+    \centering
+    \begin{tabular}{ccc}
+        \begin{subfigure}[t]{0.3\linewidth}
+            \includegraphics[width=\linewidth]{illustrate_vf_1}
+            \caption{After the 1st iteration.}
+            \label{fig:iteration1}
+        \end{subfigure}
+        \begin{subfigure}[t]{0.3\linewidth}
+            \includegraphics[width=\linewidth]{illustrate_vf_2}
+            \caption{After the 2nd iteration.}
+            \label{fig:iteration2}
+        \end{subfigure}
+        \begin{subfigure}[t]{0.3\linewidth}
+            \includegraphics[width=\linewidth]{illustrate_vf_3}
+            \caption{After the 3rd iteration.}
+            \label{fig:iteration3}
+        \end{subfigure}
+            
+    \end{tabular}
+
+    \caption{Illustration of the behavior of our algorithm for an arm with $4$ states. We plot the average gain as a function of penalty $\lambda$ of the various policy and of the policy computed by the algorithm (the model is the same as the one of Figure~\ref{fig:illustrate_vf}.)}
+    \label{fig:illustrate_algo}
+\end{figure}
+
+\subsection{Correctness of Algorithm~\ref{algo:whittle_informal}}
+
+The following result shows that Algorithm~\ref{algo:whittle_informal} is correct when testing indexability or computing Whittle index.
+\begin{thm}
+    \label{thm:thm1}
+    For a unichain RB, if the RB is indexable, then the vector $\lambda$ returned by Algorithm~\ref{algo:whittle_informal} corresponds to the Whittle indices. If the RB is not indexable, then the algorithm returns that the problem is not indexable. 
+\end{thm}
+
+\begin{proof}
+    Recall that $g^{*}(\lambda)=\max_{\pi} g^\pi(\lambda)$ is the optimal gain for penalty $\lambda$ (\emph{i.e.}, the red curve of Figure~\ref{fig:illustrate_indexability}). We define the function $g^{algo}(\cdot)$ as the gain of the policies computed by Algorithm~\ref{algo:whittle_informal} (\emph{i.e.}, the blue curve on Figure~\ref{fig:illustrate_algo}) as follows: For all $k\in\{1,\dots, n\}$ and $\lambda\in[\mu^{k-1}_{\min},\mu^{k}_{\min}]$: $g^{algo}(\lambda) := g^{\pi^k}(\lambda)$. Our proof relies on the following lemma.
+    \begin{lemma}
+        \label{lem:algo_equivalent}
+        The three following facts are equivalent:
+        \begin{enumerate}[label=(\roman*)]
+            \item \label{lem:algo_equivalent_i} For all $k$: $g^{*}(\mu^k_{\min})=g^{algo}(\mu^k_{\min})$
+            \item \label{lem:algo_equivalent_ii} For all $\lambda$: $g^{*}(\lambda)=g^{algo}(\lambda)$.
+            \item \label{lem:algo_equivalent_iii} The RB is indexable.
+        \end{enumerate}
+    \end{lemma}
+    Indeed, assume that Lemma~\ref{lem:algo_equivalent} holds. Then, if the RB is not indexable Line~\ref{algo1:test1} or \ref{algo1:test2} will return "non-indexable" because of \ref{lem:algo_equivalent_i}. If the RB is indexable, then the sequence of policies $\pi^k$ satisfy the assumptions of Lemma~\ref{lem:indexable} and the values $\lambda_i$ are therefore the Whittle indices.
+
+    \begin{proof}[Proof of Lemma~\ref{lem:algo_equivalent}] 
+        \ref{lem:algo_equivalent_i} $\Leftrightarrow$ \ref{lem:algo_equivalent_ii}: $g^{algo}(\cdot)$ is piecewise affine and convex. As such, it is the largest affine function that goes through the points $g^{algo}(\mu^k_{\min})$. Since $g^*$ is the optimal gain, we have $g^{algo}(\lambda)\le g^{*}(\lambda)$. Since $g^*$ is also convex and goes through $g^{algo}(\mu^k_{\min})$, both functions are equal.
+     
+        \noindent
+        \ref{lem:algo_equivalent_ii} $\Rightarrow$  \ref{lem:algo_equivalent_iii}: If \ref{lem:algo_equivalent_ii} holds, then the sequence of policies $\pi^k$ satisfies the assumptions of Lemma~\ref{lem:indexable} and the values $\lambda_i$ are therefore the Whittle indices.
+
+        \noindent
+        \ref{lem:algo_equivalent_iii}  $\Rightarrow$ \ref{lem:algo_equivalent_ii}: Assume that the RB is indexable. We prove by induction on $k$ that
+        \begin{align}\label{eq:H_k}
+            g^{*}(\lambda)=g^{algo}(\lambda) \qquad \text{for all $\lambda\le\mu^k_{\min}$.}
+        \end{align}
+        This is clearly true for $k=0$ since $\mu^0_{\min}=-\infty$. Since $\mu^1_{\min}$ is the smallest penalty at which one of the curves $g^{\pi^1\setminus\{i\}}(\cdot)$ crosses $g^{\pi^1}(\cdot)$, \eqref{eq:H_k} also holds for $k=1$.
+        
+        %Assume that \eqref{eq:H_k} holds for some $k\ge0$. If $\mu^{k+1}_{\min}=\mu^k_{\min}$, then \eqref{eq:H_k} holds for $k+1$. Assume now that $\mu^{k+1}_{\min}>\mu^k_{\min}$. We argue that $\pi^k$ is the largest optimal policy for the penalty $\mu^k_{\min}$. Indeed, if there exists another policy $\pi'\subsetneq\pi^k$ that is also optimal, then by Lemma~\ref{lem:structure_optimal} there would exist a policy $\pi^k\cup\{i\}$ that would be optimal which would imply that $\mu^{k+1}_{\min}=\mu^k_{\min}$. Hence, we can assume that $\pi^k$ is the largest optimal policy for the penalty $\mu^k_{\min}$. Now, let  $\nu=\inf\{\lambda > \mu^k_{\min} \text{ such that }\pi^k\text{ is not optimal}\}$. By continuity of the functions $g^\pi(\lambda)$, there are two distinct optimal policies at $\nu$ ($\pi^k$ and another policy $\pi'$). By definition of indexability, $\pi^k\subsetneq\pi'$. By Lemma~\ref{lem:structure_optimal}, this implies that there exists a policy $\pi^k\cup\{i\}$ that is optimal at $\nu$, which implies that $\mu^{k+1}_{\min}=\nu$.
+        Assume that \eqref{eq:H_k} holds for some $k\ge0$. If $\mu^{k+1}_{\min}=\mu^k_{\min}$, then \eqref{eq:H_k} holds for $k+1$. Assume now that $\mu^{k+1}_{\min}>\mu^k_{\min}$. We argue that $\pi^{k+1}$ is the minimal optimal policy for the penalty $\mu^k_{\min}$. Indeed, if there exists another policy $\pi'\subsetneq\pi^{k+1}$ that is also optimal, then by Lemma~\ref{lem:structure_optimal}, there would exist a policy $\pi^{k+1}\setminus\{i\}$ that would be optimal which would imply that $\mu^{k+1}_{\min}=\mu^k_{\min}$. Hence, we can assume that $\pi^{k+1}$ is the minimal optimal policy for the penalty $\mu^k_{\min}$. Now, let  $\nu=\inf\{\lambda > \mu^k_{\min} \text{ such that }\pi^{k+1}\text{ is not optimal}\}$. By continuity of the functions $g^\pi(\lambda)$, there are two distinct optimal policies at $\nu$ ($\pi^{k+1}$ and another policy $\pi'$). By definition of indexability, $\pi^{k+1}\supsetneq\pi'$. By Lemma~\ref{lem:structure_optimal}, this implies that there exists $\pi^{k+1}\setminus\{i\}$ that is optimal at $\nu$, which implies that $\mu^{k+1}_{\min}=\nu$.
+    
+        \begin{figure}[ht]
+            \begin{tabular}{cc}
+                \begin{subfigure}[t]{0.4\linewidth}
+                    \includegraphics[width=\linewidth]{illustrate_non_idx1}
+                    \caption{Overview of the visited $\mu^k_{\min}$.}
+                \end{subfigure}
+                &\begin{subfigure}[t]{0.4\linewidth}
+                    \includegraphics[width=\linewidth]{illustrate_non_idx2}
+                    \caption{Zoom on $\lambda\in[0.65,0.73]$}
+                \end{subfigure}
+            \end{tabular}
+            \caption{Algorithm v.s. optimal gain for a non-indexable RB: We plot the average gain as a function of penalty for the non-indexable arm with $3$ states of Figure~\ref{fig:illustrate_non_indexable}.}
+            \label{fig:illustrate_algo_non_idx}
+        \end{figure}
+    
+    \end{proof}
+    We should note that
+    \begin{itemize}
+        \item in Line~\ref{algo1:next_mu}, $\mu^k_i$ can be infinite if there exists no penalty $\widx$ such that $g^{\pi^k}(\widx)=g^{\pi^k\setminus\{i\}}(\widx)$ but this case is still covered  in the lines that follow.
+        \item if $\mu^k_i<\mu^{k-1}_{\min}$ for all $i\in\pi^k$, then $\pi^k$ remains optimal for all $\widx>\mu^{k-1}_{\min}$. This is not possible for indexable problems because for an infinite penalty the only optimal strategy is to put all states at rest. That is why Line~\ref{algo1:test1} returns that the problem is not indexable
+        \item by Line~\ref{algo1:sigma^k}, it is possible to have $\mu^k_{\min}=\mu^{k-1}_{\min}$. This happens when several states have the same value of Whittle index. This is not problematic because we are sure that $\sigma^k\neq\sigma^{k-1}$ by  Line~\ref{algo1:pik}.
+        \item if $\mu^k_{\min}=+\infty$ then $\pi^k$ cannot be optimal for $\mu^k_{\min}$ because, again, the only optimal policy for penalty $\widx=+\infty$ is to put all states at rest, $\pi^*(\infty)=\emptyset$. Thus, Line~\ref{algo1:test2} returns the problem is not indexable
+    \end{itemize}
+\end{proof}
+
+
+
+\subsection{Naive implementation of Algorithm~\ref{algo:whittle_informal} (in $O(n^4)$)}
+
+For a given penalty $\lambda$ and a policy $\pi$, let $g^{\pi}(\lambda)$ be a scalar (called the average gain), and let $\bh^{\pi}(\lambda)$ be a vector (called the bias) such that $h^\pi_1(\lambda)=0$, and for all state $i\in[n]:$
+\begin{align}
+    \label{eq:bellman}
+    g^{\pi}(\widx) + h^{\pi}_i(\widx) = r_i^{\pi_i} -\widx\pi_i + \sum_{j=1}^nP^{\pi_i}_{ij}h^{\pi}_j(\widx).
+\end{align}
+The above system is a system of $n+1$ linear equations with $n+1$ variables (the additional equation begins $h_1^\pi(\lambda)=0$). As the RB is unichain, according to \cite{putermanMarkovDecisionProcesses1994}, the gain and bias are uniquely defined by the system of linear equations \eqref{eq:bellman}, together with the condition that $h_1^\pi(\lambda)=0$.  Note that in \eqref{eq:bellman} the sum is for $j=1$ to $n$. Since $h_1^\pi(\lambda)=0$, it can be transformed into a sum from $j=2$ to $n$. 
+
+Let us define the vector $\bv^\pi(\lambda):=[ g^\pi(\lambda), h^\pi_2(\lambda),\dots, h^\pi_n(\lambda)]^T$ which is similar to the vector $\bh(\lambda)$ in which we replaced $h^\pi_1(\lambda)$ by $g^\pi(\lambda)$. We can write Equation~\eqref{eq:bellman} under a matrix form as:
+\begin{align}
+    A^{\pi} \bv^\pi(\widx)
+    %\bu^\pi(\lambda)
+    = \br^{\pi} - \lambda \bpi, \label{eq:pre_lin_eq}
+\end{align}
+where $\br^{\pi}$ is the reward vector of policy $\pi$: $\br^{\pi}=[r^{\pi_1}_1,\dots,r^{\pi_n}_n]^T$, $\bpi=[\pi_1,\dots,\pi_n]^T$, and $A^{\pi}$ is the following square matrix:
+\begin{align}
+    {A^{\pi} := \left[\begin{array}{cccccc}
+        1 & & & &\\
+        1 & 1 &  &\\
+        1 & & \ddots & \\
+        1 & &  &1\\
+    \end{array}
+\right] {-}
+        \left[\begin{array}{ccccc}
+                0 & P_{12}^{\pi_1} &\dots & P^{\pi_1}_{1n}\\
+                0 & P_{22}^{\pi_2} &\dots & P^{\pi_2}_{2n}\\
+                  &\vdots&&\vdots\\
+                0 & P_{n2}^{\pi_n} &\dots & P^{\pi_n}_{nn}\\
+        \end{array}
+        \right]}
+        {=} {\left[\begin{array}{ccccc}
+                1 & - P_{12}^{\pi_1} & \dots & -P_{1n}^{\pi_1}\\
+                1 & 1-P_{22}^{\pi_2} & \dots & -P_{2n}^{\pi_2}\\
+                \vdots\\
+                1 &  -P_{n2}^{\pi_n} & \dots &1-P_{nn}^{\pi_n}
+        \end{array}\right]} \label{eq:def_A}
+\end{align}
+As we show in Lemma~\ref{lem:invertible}, in unichain MDP, the matrix $A^{\pi}$ is invertible for any policy $\pi$. In consequence, $\bv^{\pi}$ is an affine function of $\lambda$:
+\begin{align}
+    \label{eq:h is linear}
+    \bv^{\pi}(\lambda) = (A^{\pi})^{-1}(\br^{\pi} - \lambda \bpi) =(A^{\pi})^{-1}\br^\pi - \lambda (A^{\pi})^{-1}\bpi
+\end{align}
+
+
+The following lemma gives a characterization of the indifference between activating or resting a state under a given penalty. Its proof is in Appendix \ref{app:lem:mu^k_i}.
+
+
+\begin{lemma}
+    \label{lem:mu^k_i}
+    Let $\pi$ be a policy, $i\in\pi$ be any active state and $\lambda$ be a penalty. Then the two policies $\pi$ and $\pi\setminus\{i\}$ have the same gain for the penalty $\lambda$ (\emph{i.e.}, $g^\pi(\lambda)=g^{\pi\setminus\{i\}}(\lambda)$) if and only if
+    \begin{align}
+        \delta_i - \lambda + \Delta_i v^\pi(\lambda) = 0,\label{eq:mu^k_i}
+    \end{align}
+    where $\delta_i=r^1_i - r^0_i$ and $\Delta_i$ is the vector such that $\Delta_{i1}=0$ and $\Delta_{ij}=P^1_{ij}-P^0_{ij}$ for $j\in\{2\dots n\}$.
+\end{lemma}
+
+
+
+Using this result, computing a value $\mu^k_i$ at Line~\ref{algo1:next_mu} of Algorithm~\ref{algo:whittle_informal} can be constructed by finding a penalty that satisfies \eqref{eq:mu^k_i} for the policy $\pi^k$, which is a (one-dimensional) linear equation. Indeed, let $\bd^{\pi^k}=-(A^{\pi^k})^{-1}\bpi^k$. By \eqref{eq:h is linear}, $\bv^{\pi^k}(\lambda)$ is a linear function of $\lambda$ whose derivative is $\bd^{\pi^k}$. In particular, one has: $\bv^{\pi^k}(\lambda) = \bv^{\pi^k}(\mu^{k-1}_{\min}) + (\lambda-\mu^{k-1}_{\min})\bd^{\pi^k}$. Using the lemma above for $\mu^{k-1}_{min}$, we have ${\bv^{\pi^k}(\mu^{k-1}_{\min})=\bv^{\pi^{k-1}}(\mu^{k-1}_{\min})}$. Hence, Equation~\eqref{eq:mu^k_i} can be written as $\delta_i - \lambda + \Delta_i (\bv^{\pi^{k-1}}(\mu^{k-1}_{\min}) + (\lambda-\mu^{k-1}_{\min})\bd^{\pi^k}_i)=0$ which is satisfied if and only if $\lambda=\mu^k_i$, where 
+\begin{align}
+    \label{eq:mu_i_k_from_d}
+    \mu^k_i := \frac{\delta_i + \Delta_i \bv^{\pi^{k-1}}(\mu^{k-1}_{\min}) - \mu^{k-1}_{\min} \Delta_i\bd^{\pi^k}}{1-\Delta_i \bd^{\pi^k}}.
+\end{align}
+This shows that, for a given $k$, computing all $\mu^k_i$ of Line~\ref{algo1:next_mu} can be done in $O(n^3)$: A $O(n^3)$ to inverse the matrix $A^{\pi}$ and compute $\bd^\pi$, plus some smaller order terms to compute the solutions of \eqref{eq:mu_i_k_from_d}. Similarly, the test in Line~\ref{algo1:test2} of Algorithm~\ref{algo:whittle_informal} can also be implemented in $O(n^3)$ by using Lemma~\ref{lem:test_optimality} below. This leads to an overall complexity of $O(n^4)$ for Algorithm~\ref{algo:whittle_informal} that contains $n$ loops each having a $O(n^3)$ complexity.
+
+
+\begin{lemma}
+    \label{lem:test_optimality}
+    Let $\pi$ be a policy, $\lambda$ be a penalty and $\bv^\pi(\lambda)$ as in \eqref{eq:h is linear}. Then the policy $\pi$ is optimal for the penalty $\lambda$ if and only if for all state $i$: 
+    \begin{align}
+        \label{eq:policy_improvement}
+        \delta_i - \lambda + \Delta_i \bv^\pi(\lambda) \le0 \text{ if $i\not\in\pi$}\qquad \text{ and }\qquad
+        \delta_i - \lambda + \Delta_i \bv^\pi(\lambda) \ge0 \text{ if $i\in\pi$}
+    \end{align}
+    where $\delta_i$ and $\Delta_i$ are as in Lemma~\ref{lem:mu^k_i}. 
+\end{lemma}
+\begin{proof}
+    The proof is a direct consequence of {\it Policy Improvement} as described in Theorem~8.4.4 of \cite{putermanMarkovDecisionProcesses1994}: a policy that satisfies \eqref{eq:policy_improvement} cannot be improved and is therefore optimal.
+\end{proof}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Compute Whittle index in $(2/3)n^3 + o(n^3)$}
+\label{sec:formal_widx_algo}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+This section describes a way to implement Algorithm~\ref{algo:whittle_informal}  efficiently using  $O(n^3)$ operations. The main idea is to use the Sherman-Morrison formula to compute in $O(n^2)$ the bias vector associated to $g^{\pi\setminus\{i\}}(\lambda)$ from the one associated to $g^{\pi}(\lambda)$. This leads to a $O(n^3)$ algorithm. Once this main idea is in place, we show how to avoid unnecessary computations to obtain an algorithm that performs $(2/3)n^3+o(n^3)$ arithmetic operations.
+
+\subsection{Additional Notations}
+
+In order to obtain a more efficient and compact algorithm, for an iteration $k$ and a state $i$, we define $y^k_i:=\Delta_{i}\bd^{\pi^k}$ and $z^k_i:=\Delta_{i}\bv^{\pi^k}(\mu^k_{\min})$, where $\bd^{\pi^k}$, $\Delta_i$ and $\bv^{\pi^k}$ are as in \eqref{eq:mu_i_k_from_d}. Equation~\eqref{eq:mu_i_k_from_d} can be rewritten as
+\begin{align}
+    \mu_i^k &= \displaystyle\frac{\delta_i +z_i^{k-1}-\mu^{k-1}_{\min}y^k_i}{1-y_i^k}.
+    \label{eq:mu^k_i_from_y}
+\end{align}
+The above equation can be used to compute $\mu_i^k$ and $\mu^k_{\min}$ easily from $y^k_i$ and $z^{k-1}_i$. 
+
+For a given policy $\pi$, $\bv^\pi$ is a linear function of $\lambda$ whose derivative is $\bd^\pi$. Hence, the value $z^k_i$ can be computed from $y^k_i$ and $z^{k-1}_i$ as:
+\begin{align}
+    z^k_i &= \Delta_{i}\bv^{\pi^k}(\mu^k_{\min}) \nonumber\\
+    &= \Delta_{i}\bv^{\pi^k}(\mu^{k-1}_{\min}) + \Delta_{i}\bdk(\mu^k_{\min} - \mu^{k-1}_{\min})\nonumber\\
+    %&= \Delta_{i}\bv^{\pi^{k-1}}(\mu^{k-1}_{\min}) + (\mu^k_{\min}-\mu^{k-1}_{\min})y_i^k\nonumber\\
+    &= z_i^{k-1} +(\mu^k_{\min}-\mu^{k-1}_{\min})y_i^k\label{eq:z^k+1-i}
+\end{align}
+where the third equality is true by Lemma~\ref{lem:mu^k_i}.
+This shows that the critical values to compute are the variables $y^k_i$. In the remainder of this section, we show that the quantity $y^k_i$ can be computed efficiently by a recursive formula.
+
+%$y_i^k =y_i^{k-1} +\displaystyle(1 -y_{\sigma^{k-1}}^{k-1})\frac{X_{i\sigma^{k-1}}^{k-1}}{1+X_{\sigma^{k-1}\sigma^{k-1}}^{k-1}}$
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Application of Sherman-Morrison Formula}
+\label{ssec:sm_form}
+
+
+To compute $y^{k+1}_i=\Delta_{i}\bd^{\pi^{k+1}}$, we need to compute the quantities $\bd^{\pi^{k+1}} = -(A^{\pi^{k+1}})^{-1}\bpi^{k+1}$. This requires the inverse of ${A^{\pi^{k+1}}}$. From the definition of $\pi^k$, two policies $\pi^k$ and $\pi^{k+1}$ differs by exactly one state: $\bpi^{k+1}=\bpi^k - \be_{\sigma^k}$. Also by definition of $A^\pi$ in \eqref{eq:def_A}, the two matrices $A^{\pi^k}$ and $A^{\pi^{k+1}}$ differs only at the line $\sigma^k$:
+\begin{align}
+    A^{\pi^{k+1}} = A^{\pi^k} + \be_{\sigma^k} \Delta_{\sigma^k}
+    \label{eq:Ak_from_Ak-1}
+\end{align}
+where $\Delta_{\sigma^k}$ is a row vector defined as in the previous section.
+
+One can compute efficiently the inverse of matrix $A^{\pi^{k+1}}$ from the one of $\Ak$ by using Sherman-Morrison formula, which says that if $A\in\R^{n\times n}$ is an invertible square matrix and $\bp, \bq\in\R^n$ are two column vectors such that $A+\bp\bq^\top$ is invertible, then: 
+\begin{align*}
+    (A + \bp\bq^\top)^{-1}
+    &=A^{-1} - \frac{A^{-1}\bp\bq^\top A^{-1}}{1+\bq^\top A^{-1}\bp}.
+\end{align*}
+Let $X^k_{ij} = \Delta_i (A^{\pi^k})^{-1}\be_j$. Following \eqref{eq:Ak_from_Ak-1}, we can apply Sherman-Morrison formula with matrix $A^{\pi^k}$; and vectors $\bp=\be_{\sigma^k}$, and $\bq^T=\Delta_{\sigma^k}$. After some simplification, we get:
+\begin{align}
+    X^{k+1}_{ij} &= \Delta_i (A^{\pi^{k+1}})^{-1}\be_j =\Delta_i (A^{\pi^k}+\be_{\sigma^k}\Delta_{\sigma^k})^{-1}\be_j\nonumber\\
+    &= X^{k}_{ij} - \frac{X^{k}_{i\sigma^k} X^{k}_{\sigma^k j}}{1+X^{k}_{\sigma^k \sigma^k}}.\label{eq:X^k+1-i}
+\end{align}
+
+For $y^{k+1}_i = \Delta_{i}\bd^{\pi^{k+1}} = -\Delta_i(A^{\pi^{k+1}})^{-1} \bpi^{k+1}$, we use the fact that $\bpi^{k+1}=\bpi^k - \be_{\sigma^k}$ and also apply Sherman-Morrison formula:
+\begin{align}
+    y^{k+1}_i &= -\Delta_i(A^{\pi^{k}}+\be_{\sigma^k}\Delta_{\sigma^k})^{-1} (\bpi^k-\be_{\sigma^k})\nonumber\\
+              &= -\Delta_i (A^{\pi^{k}})^{-1}(\bpi^k-\be_{\sigma^k})  + \frac{\Delta_i (A^{\pi^{k}})^{-1} \be_{\sigma^k}\Delta_{\sigma^k}(A^{\pi^{k}})^{-1}}{1 + \Delta_{\sigma^k} (A^{\pi^{k}})^{-1} \be_{\sigma^k}} (\bpi_k-\be_{\sigma^k})\nonumber\\
+    &= y^k_i + X^k_{i\sigma^k} + \frac{X^k_{i\sigma^k}(-y^k_{\sigma^k} - X^{k}_{\sigma^k\sigma^k})}{1+X^{k}_{\sigma^k\sigma^k}}\nonumber\\
+    &= y^k_i + \frac{X^k_{i\sigma^k}(1-y^k_{\sigma^k})}{1+X^{k}_{\sigma^k\sigma^k}} =y^k_i +(1-y^k_{\sigma^k})X^{k+1}_{i\sigma^k}\label{eq:y^k+1-i}
+\end{align}
+
+The above formula indicate how to compute $\by^{k+1}$ from $\by^k$. To complete this analysis, let us show that $\by^1=\mathbf{0}$. For a given policy $\pi$, the vector $\bd^{\pi}$ satisfies the same equation as Equation~\eqref{eq:pre_lin_eq} but replacing $r^{\pi_i}_i-\lambda\pi_i$ by $-\pi_i$. This implies that for $\pi=\pi^1=[1,\dots,1]^T$, one has $\bd^\pi=[-1,0,\dots,0]^T$ as $d^\pi_1$ is the average gain of a MDP whose reward is one in all states and $d^\pi_2,\dots, d^\pi_n$ is the bias of this MDP.  This shows that for all $i$, we have $y^{1}_i=\Delta_{i}\bd^{\pi^{1}}=-\Delta_{i1}=0$. 
+
+\subsection{Detailed algorithm}
+\label{ssec:two_third_algo}
+
+
+
+Equation~\eqref{eq:mu^k_i_from_y} shows how to compute $\mu^k_i$ from the values of $y^{k}_i$ and $z^{k-1}_i$ while \eqref{eq:y^k+1-i}, \eqref{eq:X^k+1-i} and \eqref{eq:z^k+1-i} show how to compute the values of $y$, $z$ and $X$ recursively in $k$. In order to compute $\mu^k_{\min}$ and $\sigma^k$, one only needs to compute the values $\mu^k_i$ for $i\in\pi^{k}$.  Once $\mu^k_{\min}$ is determined as in Line~\ref{algo1:sigma^k}, we need to verify the optimality of $\pi^k$ for penalty $\mu^k_{\min}$. That is, we check whether for any passive state $i\not\in\pi^k$, the rest action is worst than the activate action in state $i$ for penalty $\mu^k_{\min}$. If it is the case, then the process is non-indexable. By Lemma~\ref{lem:test_optimality}, to do so, it is sufficient to check that for $i\in[n]\setminus\pi^{k}$:
+\begin{align}
+    \mu^k_{\min} < \delta_i +\Delta_{i}\bv^{\pi^k}(\mu^k_{\min}) = \delta_i +z^k_i. \label{eq:test}
+\end{align}
+
+\begin{algorithm}[hbtp]
+    \DontPrintSemicolon
+    \Init{}{
+        Set $\pi^1=[n]$, $k_0=1$, $\delta_i=r^1_i -r^0_i$, $\Delta_{i1}=0$ and $\Delta_{ij}=P^1_{ij}-P^0_{ij}, \forall i\in[n], j\in\{2\dots n\}$. \label{algo2:init_beginning}\;
+        Set $X^1=\Delta(A^{\pi^1})^{-1}$, where $A^{\pi^1}$ is defined by \eqref{eq:def_A}. \label{algo2:line_inverse}\;
+        Set $\mu^0_{\min}=-\infty$, $\by^1=\pmb{0}$, and $\bz^0=X^1\br^{\pi^1}$ \label{algo2:init_end} \;
+    }
+    \For{$k=1$ {\bfseries to} $n$}{
+        \For{$i\in\pi^k$}{
+            Set $\displaystyle\mu_i^k = \frac{\delta_i +z^{k-1}_i-\mu^{k-1}_{\min} y^k_i}{1-y^k_i}$ \label{algo2:muki}             
+            \algocomment{For $k=1$: $\mu^{0}_{\min} y^1_i=-\infty\times0=0$.}
+            \;
+        }
+        \If{$\argmin_{i\in\pi^k:\mu_i^k \ge \mu_{\min}^{k-1}}\mu_i^k=\emptyset$}{
+            \Return{The problem is not indexable}
+        }
+        Set $\sigma^k:=\argmin_{i\in\pi^k:\mu_i^k \ge \mu_{\min}^{k-1}}\mu_i^k$ and $\lambda_{\sigma^k} = \mu^k_{\min} = \mu^k_{\sigma^k}$ \label{line:def_muk}\;
+        Set $\bz^k =\bz^{k-1} +(\mu^k_{\min}-\mu^{k-1}_{\min}) \by^k$ \algocomment{For $k=1$, one has $\bz^1=\bz^0$.}\;
+        \For{$i\in[n]\setminus\pi^k$}{
+            \If{$\mu^k_{\min}<\delta_i +z_i^k$}{
+                \Return{The problem is not indexable}
+            }
+        }
+        \If{$k<n$}{
+            Set $\pi^{k+1} = \pi^{k}\setminus\{\sigma^{k}\}$ \; % should update pi first because X uses pi
+            Update\_X(k) \label{line:update_X} \algocomment{Here we call Subroutine~\ref{algo:update_X} or Subroutine~\ref{algo:FMM}}\;
+            Set $\by^{k+1}=\by^{k} +(1 -y^{k}_{\sigma^{k}}) X^{k+1}_{\colon\sigma^{k}}$ \label{algo2:y^k}\;
+        }
+        \label{algo2:end_for_loop}
+    }
+    \Return{The problem is indexable and the indices are $\lambda$.}
+    \caption{Test indexability and compute Whittle indices (if indexable).}
+    \label{algo:whittle_n3}
+\end{algorithm}
+
+\SetAlgorithmName{Subroutine}{subroutine}{} % redefines algorithm names for the rest of the document
+\begin{algorithm}[ht]
+    \For{$\ell=1$ to $k$}{
+        \For(\algocomment{or $i\in\pi^{\ell+1}$ if we do not test indexability.}){$i\in[n]$}{
+            $X_{i\sigma^{k}}^{\ell+1} := X_{i\sigma^{k}}^{\ell} -\displaystyle\frac{X^{\ell}_{i\sigma^{\ell}}}{1+X^{\ell}_{\sigma^{\ell}\sigma^{\ell}}} X^{\ell}_{\sigma^{\ell}\sigma^{k}}$
+            }
+        }
+    \caption{Update\_X()}
+    \label{algo:update_X}
+\end{algorithm}
+
+
+
+
+
+
+
+This leads to Algorithm~\ref{algo:whittle_n3} that can be decomposed as follows:
+\begin{enumerate}
+    \item In Line~\ref{algo2:init_beginning} to \ref{algo2:init_end}, we initialize the various variables. The main complexity of this part is to compute the matrix $X^1$, which is equivalent to solving the linear system $XA^{\pi^1}=\Delta$. It can be done by inverting the matrix $A^{\pi^1}$ and multiplying this by the matrix $\Delta$. This can be done in a subcubic complexity by using for instance Strassen's algorithm \cite{strassen1969gaussian}.
+    \item We then enter the main loop:
+        \begin{itemize}
+            \item We update the vectors $\mu$, $\bz$ by using Equations \eqref{eq:mu^k_i_from_y} and \eqref{eq:z^k+1-i}, and test indexability. This costs $O(n)$ operations per iteration, thus $O(n^2)$ in total.
+            \item We update the vector $X$ according to \eqref{eq:X^k+1-i}. The ``naive'' way to do so is to use Subroutine~\ref{algo:update_X}. At iteration $k$ this costs $2kn$ arithmetic operations if we want to test indexability, and $2\sum_{l=1}^{k}(n-l)$ if we do not want to test indexability. The total complexity of computing $X$ is $n^3 +O(n^2)$ arithmetic operations if we test indexability and $(2/3)n^3 +O(n^2)$ if we do not.
+              A detailed study of the arithmetic complexity is provided in Appendix~\ref{apx:implementation}, where we also provide details on how to efficiently implement the algorithm, including how to optimize memory costs.
+            \item In Line \ref{algo2:y^k}, we update the vector $\by$ by using Equations~\eqref{eq:y^k+1-i}, which costs $O(n)$ per iteration. 
+        \end{itemize}
+\end{enumerate}
+Hence, the total complexity of this algorithm is $n^3+o(n^3)$ if we test indexability and $(2/3)n^3+o(n^3)$ if we do not test indexability. Without testing the indexability, our algorithm has the same main complexity as \cite{nino2020fast}. However, the algorithm of \cite{nino2020fast} computes Whittle index only for an arm that is PCL-indexable. Hence we can claim our algorithm is the first algorithm that computes Whittle index with cubic complexity for all indexable restless bandits. It is also the first algorithm that detects non-indexability of restless bandits.
+
+
+\paragraph{Remark:} Equivalently, instead of calling Subroutine\ref{algo:update_X} at Line~\ref{line:update_X}, one could do the following update for all $j\in\pi^k$ and $i\in[n]$ (or $i\in\pi^{k}$ if we do not test indexability):
+\begin{align}
+    X_{ij}^{k+1} := X_{ij}^{k} -\displaystyle\frac{X^{k}_{i\sigma^{k}}}{1+X^{k}_{\sigma^{k}\sigma^{k}}}X^{k}_{\sigma^{k}j}. \label{eq:update_X_naif}
+\end{align}
+This iterative update is very close to the one used in \cite{akbarzadeh2020conditions,nino2020fast} for discounted restless bandit. This results in an algorithm that has the same total complexity as Subroutine~\ref{algo:update_X} (of $n^3+O(n^2)$ or $(2/3)n^3+O(n^2)$ with or without the indexability test) because both algorithms will have computed the same values of $X^{k}_{ij}$. The reason to use Subroutine~\ref{algo:update_X} is that, as we will see in the next section, not all values of $X^{k}_{ij}$ are needed: in particular, for $\ell<k$, the computation of the value $X^\ell_{i\sigma^k}$ has no interest per say and is only useful because it allows to recursively compute $X^{k+1}_{i\sigma^k}$. In the section below, we show how to reduce the cost by avoiding the computation of $X^\ell_{i\sigma^k}$ when $\ell$ is much smaller than $k$. We comment more on the differences with \cite{akbarzadeh2020conditions,nino2020fast} in Appendix~\ref{apx:comparison} and in particular we explain why our approach can be tuned into a subcubic algorithm while \eqref{eq:update_X_naif} cannot.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{A subcubic Algorithm}
+\label{sec:subcubic algorithm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Main idea: recomputing $X^{k}$ from $A^{\pi^k}$ periodically}
+
+The main computational burden of Algorithm~\ref{algo:whittle_n3} is concentrated on two lines: on Line~\ref{algo2:line_inverse} where we compute $X^1$ by solving a linear system, and on Line~\ref{line:update_X} where we compute $X^{k+1}_{\colon\sigma^{k}}$ from $X^1_{\colon \sigma^{k}}$. The remainder of the code runs in $O(n^2)$ operations and is therefore negligible for large matrices. In fact, the computation of $X^1$ is done by solving a linear system, which can be computed by using a subcubic algorithm (like Strassen~\cite{strassen1969gaussian}). In this section, we show how to optimize our algorithm by reducing the complexity of the update\_X() function, at the price of recomputing the full matrix $X^{k_0}$ from $A^{\pi^{k_0}}$ periodically.
+
+At iteration $k$ of Algorithm~\ref{algo:whittle_n3}, the quantities $X^{k+1}_{i\sigma^{k}}$ are used at Line~\ref{algo2:y^k} to obtain the values $\by^{k+1}$. The matrix $X^k$ is defined as $X^k=\Delta(A^{\pi^k})^{-1}$. It also satisfies Equation~\eqref{eq:X^k+1-i}, that is, for an iteration $\ell$ and states $i$ and $j$, we have: 
+\begin{align}
+    \label{eq:X^ell+1-i}
+    X^{\ell+1}_{ij} &= X^{\ell}_{ij} - \frac{X^{\ell}_{i\sigma^\ell} X^{\ell}_{{\sigma^\ell} j}}{1+X^{\ell}_{{\sigma^\ell\sigma^\ell}}}.
+\end{align}
+The way Subroutine~\ref{algo:update_X} is implemented is to initialize $X^1=\Delta(A^{\pi^1})^{-1}$ and then use \eqref{eq:X^ell+1-i} recursively to compute the vector $X^{k+1}_{\colon \sigma^{k}}$ from $X^1_{\colon \sigma^{k}}$ at each iteration.
+
+Here, we propose an alternative formulation which consists in recomputing the whole matrix $X^{k}=\Delta(A^{\pi^k})^{-1}$ every $K$ iterations. In the meantime, we use \eqref{eq:X^ell+1-i} to compute the values $X^{\ell}_{i\sigma^{k-1}}$ for ${\ell\in\{k_0+1,\dots, k\}}$ where $k_0$ is the iteration at which we recomputed the whole matrix ${X^{k_0}=\Delta(A^{\pi^{k_0}})^{-1}}$. This can be implemented by changing the call to Subroutine~\ref{algo:update_X} on Line~\ref{line:update_X} by a call to Subroutine~\ref{algo:FMM}.
+\begin{algorithm}[ht]
+    \DontPrintSemicolon
+    \If{$k$ is an iteration at which we recompute the whole $X^{k+1}$}{
+        Set $k_0 := k+1$\;
+        Set $X^{k_0}=\Delta(A^{\pi^{k_0}})^{-1}$ \label{algoFMM:recompute}\;
+    }
+    \For{$\ell=k_0$ to $k$}{
+        \label{algoFMM:internal loop}
+        \For(\algocomment{or $i\in\pi^{\ell+1}$ if we do not test indexability.}){$i\in[n]$}{
+            $X_{i\sigma^{k}}^{\ell+1} := X_{i\sigma^{k}}^{\ell} -\displaystyle\frac{X^{\ell}_{i\sigma^{\ell}}}{1+X^{\ell}_{\sigma^{\ell}\sigma^{\ell}}} X^{\ell}_{\sigma^{\ell}\sigma^{k}}$ \;
+            }
+        }
+    \caption{Update\_X\_FMM(k)}
+    \label{algo:FMM}
+\end{algorithm}
+
+To see why this can be more efficient, we illustrate in Figure~\ref{fig:fast_mm} the pairs $(\ell,\sigma^k)$ for which we compute the vector $X^{\ell}_{\colon \sigma^{k}}$, either for Subroutine \ref{algo:update_X} or Subroutine~\ref{algo:FMM}.  In each case, a vertical blue line indicates that we recompute the whole matrix $X^k$ by solving a linear system.  The gray zone corresponds to the values $(\ell,\sigma^k)$ for which we compute $X^\ell_{\colon \sigma^{k}}$ using Equation \eqref{eq:X^ell+1-i} and the red squares represent the vector $X^{k+1}_{\colon \sigma^k}$ used at iteration $k$ of Algorithm~\ref{algo:whittle_n3}. For Subroutine~\ref{algo:update_X}, we do one matrix inversion at the beginning and then compute for all $(\ell,\sigma^k)$ with $\ell\le k$ because the red square at value $(k+1,k)$ is computed starting from the vertical blue line at value $(1,k)$. For Subroutine~\ref{algo:FMM}, we do $n/K$  (here $n/K=4$) full recomputation of $X^k$, which correspond to the vertical blue lines. We gain in terms of operations because the surface of the gray zone to compute is divided by $n/K$.
+
+
+\begin{figure}[ht]
+    \centering
+    \begin{tabular}{cc}
+        \begin{tikzpicture}[scale=0.19, shorten >=2pt]
+            \draw (0,0) edge[->] (22,0);
+            \draw (0,0) edge[->] (0,22);
+            \node at (21,1) {$\ell$};
+            \node at (-1.5,21) {$\sigma^k$};
+            \foreach \i in {0,...,20} \draw[fill,red!60] (\i,\i) rectangle (\i+1,\i+1);
+            \foreach \i in {0}{
+               \draw[fill,blue,opacity=0.5] (\i,\i+1) rectangle (\i+1,21);
+               \foreach \j in {1,...,19}{
+                   \fill[black,opacity=0.3] (\i+\j,\i+\j+1) rectangle (\i+\j+1,\i+21);
+               }
+            }
+            \foreach \i in {2,...,20}{
+                \draw (1,\i+0.5) edge[->] (\i,\i+0.5);
+            }
+            %\node at (0,-1) {}; % to have the same vertical size as the right figure. 
+            % \foreach \j in {1,...,6}{
+            %     \foreach \k in {\j,...,6}{
+            %         \draw (\j+0.5,\k+0.5) edge[->] (\j-0.7,\k+0.5) (\j+0.5,\k+0.5) edge[->] (\j-0.5,\k-0.5);
+            %     }
+            % }
+            % \node at (6,9) {$\udots$};
+            % \node at (3,9) {$\vdots$};
+        \end{tikzpicture}
+        &
+        \begin{tikzpicture}[scale=0.19, shorten >=2pt]
+            \draw (0,0) edge[->] (22,0);
+            \draw (0,0) edge[->] (0,22);
+            \node at (21,1) {$\ell$};
+            \node at (-1.5,21) {$\sigma^k$};
+            \foreach \i in {0,...,20} \draw[fill,red!60] (\i,\i) rectangle (\i+1,\i+1);
+            \foreach \i in {0,5,10,15}{
+               \draw[fill,blue,opacity=0.5] (\i,\i+1) rectangle (\i+1,21);
+               \foreach \j in {1,...,5}{
+                   \fill[black,opacity=0.3] (\i+\j,\i+\j+1) rectangle (\i+\j+1,\i+6);
+                }
+                \foreach \j in {2,...,5}{
+                    \draw (\i+1,\i+\j+0.5) edge[->] (\i+\j,\i+\j+0.5);
+                }
+            }
+            \draw (11,11) edge[<->] node[below] {$K$} (16,11);
+            \draw (16,11) edge[<->] node[right] {$K$} (16,16);
+            \node at (-1.5,6) {$K$}; \draw[dotted] (-.5,6) -- (5.5,6);
+            \node at (-1.5,11) {$2K$}; \draw[dotted] (-.5,11) -- (10,11);
+            \node at (-1.5,16) {$\vdots$};
+        \end{tikzpicture} \\
+        (a) Implementation of Subroutine~\ref{algo:update_X}.
+        &(b) Implementation of Subroutine~\ref{algo:FMM}
+    \end{tabular}
+    \caption{Illustration of the improvement proposed by replacing Subroutine~\ref{algo:update_X} by Subroutine~\ref{algo:FMM}. For Subroutine~\ref{algo:FMM}, we solve more linear systems (each vertical blue line corresponds to solving a linear system) but we reduce the gray zone to compute. A linear arrow corresponds to the internal loop of Line~\ref{algoFMM:internal loop} of Subroutine~\ref{algo:FMM}.}
+    \label{fig:fast_mm}
+\end{figure}
+
+Note that the $y$-axis of Figure~\ref{fig:fast_mm} is ordered by increasing value of $\sigma^k$ (and not by increasing value of $k$). The value of $\sigma^k$ is computed at iteration $k$ but is unknown before. This explains why in Subroutine~\ref{algo:FMM}, when we recompute the matrix $(X^{k+1}_{ij})$ at an iteration $k$ (vertical blue lines in Figure~\ref{fig:apx_fast_mm}(b)), we recompute it for all $i,j$ and not just $i,j\in\{\sigma^{k+1}\dots \sigma^K\}$ (which are the only values that we will use): Indeed, $\sigma^{k+1}\dots \sigma^K$ are not known at iteration $k$. 
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{A subcubic Algorithm for Whittle Index}
+%\subsection{Background on fast matrix multiplication}
+
+We now assume to have access to a subcubic matrix multiplication algorithm that satisfies the following property:
+\begin{enumerate}[label=(FMM)]    
+    \item \label{hypo:FMM} There exists an algorithm to multiply a matrix of size $n\times n$ by a matrix of size $n\times n^\alpha$ that runs in $O(n^{\omega(\alpha)})$, where $\omega:[0,1]\to[2,3]$ is a non-decreasing function.
+\end{enumerate}
+The naive algorithm to compute the product of two square matrices of size $n\times n$ runs in $O(n^3)$. In the seminal work \cite{strassen1969gaussian}, Strassen showed that the exponent $3$ is not optimal and derived an algorithm that runs in $O(n^{\log_2 7})$ -- known as Strassen's algorithm. This shows that $\omega(\alpha)\le\log_27\approx 2.8$. Today, finding an algorithm with the smallest $\omega(\alpha)$ is an active area of research. For square matrices (i.e. $\alpha=1$), the best known exponent today is $\omega(1)\le 2.37286$ \cite{alman2021refined} and is based on a variant of Coppersmith-Winograd \cite{coppersmith1987matrix}.  Note that it is known that matrix inversion is not harder than matrix multiplication \cite{cormen2009introduction}, hence, computing the inverse of a square matrix can also be done in $O(n^{\omega(1)})$. A similar reduction exists for multiplying  rectangular matrices. It is shown in \cite{pan1972schemes,huang1998fast}, that if there exists an algorithm to multiply a matrix of size $n\times n$ by a matrix of size $n \times n^\alpha$ that runs in $O(n^{\omega(\alpha)})$, then there also exists an algorithm in $O(n^{\omega(\alpha)})$ to multiply a matrix $n\times n^\alpha$ by a matrix of size $n^\alpha \times n$. The best upper bound on $\omega(\alpha)$ known today are given in \cite{gall2018improved}.
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Going back to Algorithm~\ref{algo:whittle_n3} where Line~\ref{line:update_X} is Subroutine~\ref{algo:FMM}, we now assume that we recompute the whole matrix $X^k$ every $O(n^\alpha)$ iterations. The new algorithm has a subcubic complexity:
+
+\begin{theorem}
+    \label{th:subcubic}
+    Algorithm~\ref{algo:whittle_n3} with Subroutine \ref{algo:FMM} checks indexability and computes Whittle (and Gittins) index in time at least $\Omega(n^{2.5})$ and at most $O(n^{2.5286})$ when choosing $\alpha=0.5286$.
+\end{theorem}
+
+We believe that Theorem~\ref{th:subcubic} is the first result that shows that Whittle index can be computed in subcubic time. As we show in Section~\ref{sec:discounted}, this algorithm can be directly extended to discounted index. As a byproduct, we also obtain the first subcubic algorithm to compute Gittins index.
+
+
+\begin{proof}
+     The algorithm starts by computing $X^1$ which can be done in $O(n^{\omega(1)})$. Then, there are $n^{1-\alpha}$ times that we do:
+    \begin{enumerate}
+    \item We fill the "gray" mini matrices by using \eqref{eq:X^ell+1-i}. This amounts to three for loops of size $n$ (for $i$), $n^\alpha$ (for $k$) and $n^\alpha$ (for $\ell$). Hence, each small gray matrix costs $O(n^{1+2\alpha})$.
+    \item At the end of a cycle, we recompute the full inverse by updating $(A^{\pi^k})^{-1}$ from $(A^{\pi^{k-n^\alpha}})^{-1}$. As we show in Lemma~\ref{lem:woodbury} (stated below), this can be done in $O(n^{\omega(\alpha)})$.
+\end{enumerate}
+This implies that the algorithm has a complexity:
+\begin{align*}
+    O(n^{\omega(1)}) + n^{1-\alpha} \left(O(n^{1+2\alpha})+O(n^{\omega(\alpha)})\right)  = O(n^{\max\{2+\alpha, 1-\alpha + \omega(\alpha)\}}).
+\end{align*}
+
+To compute the optimal value of $\alpha$ minimizing this expression requires the knowledge of the function 
+$\omega(\alpha)$ which is  not known. The current state of the art  only gives  a lower bound ($\omega(\alpha) \geq 2$ ) and an upper bound described in  \cite{gall2018improved}.
+
+It is shown in \cite{gall2018improved} that $\alpha=0.5286$ is the smallest currently known value of $\alpha$ for which  $\omega(\alpha)<1+2\alpha$. This implies that the complexity is  at most $O(n^{2.5286})$.
+
+As for the lower bound,  $\omega(\alpha) \geq 2$ implies that the complexity of the
+algorithm is at least  $\Omega(n^{2.5})$.
+    \end{proof}
+  
+% \subsection{Technical lemma}
+
+% In this section, we show how to compute $A^{\pi^k}$ from $A^{\pi^{k-n^{\alpha}}}$ in $O(n^{\omega(\alpha)})$ operations.
+In the next lemma, $B$ plays the role of $A^{\pi^k}$ and $A$ the role of $A^{\pi^{k-n^{\alpha}}}$. Note that as required in the lemma, exactly $n^\alpha$ rows and columns are changed between the two.
+\begin{lemma}
+    \label{lem:woodbury}
+    Assume~\ref{hypo:FMM}. Let $A$ be a square matrix whose inverse $A^{-1}$ has already been computed, and let $B$ be an invertible square matrix such that $A-B$ is of rank smaller than $n^{\alpha}$. Then, it is possible to compute the inverse of $B$ in $O(n^{\omega(\alpha)})$. 
+\end{lemma}
+\begin{proof}
+    The matrix $B$ can be written as $B=A + UCV$ where $U$ is a $n\times n^\alpha$ matrix, $C$ is $n^\alpha\times n^\alpha$ and $V$ is $n^\alpha\times n$. The Sherman–Morrison–Woodbury formula~\cite{woodbury1950inverting} states that
+    \begin{align*}
+        B^{-1} = \left(A + UCV \right)^{-1} = A^{-1} - A^{-1}U \left(C^{-1} + VA^{-1}U \right)^{-1} VA^{-1}.
+    \end{align*}
+    This shows that $B^{-1}$ can be computed by:
+    \begin{itemize}
+        \item Computing $D:=A^{-1}U$ and $E:=VA^{-1}$: this takes $O(n^{\omega(\alpha)})$. 
+        \item Computing $F:=\left(C^{-1} + VA^{-1}U \right)^{-1}$: as this is the inversion of a $n^\alpha\times n^\alpha$ matrix, it can be done in $O(n^{\alpha\omega(1)})$ where $\alpha\omega(1)\le \omega(\alpha)$.
+        \item Computing $G:=DF$ and then $GE$: this again takes $O(n^{\omega(\alpha)})$. 
+    \end{itemize}
+    Hence, computing $B^{-1}$ can be done in $O(n^{\omega(\alpha)})$ operations for the inversion and all   multiplications plus an additional $O(n^2)$ term for the subtraction and the addition. As $\omega(\alpha)\ge2$, this concludes the proof of the lemma.
+\end{proof}
+
+
+\subsection{Subcubic algorithm in practice}
+
+The complexity of $O(n^{2.5286})$ given in Theorem \ref{th:subcubic} is mainly of theoretical interest. The value $\alpha = 0.5286$ is obtained by using the best upper bound  on $\omega(\alpha)$ known today which is based on the Coppersmith-Winograd algorithm and its variants. The Coppersmith-Winograd algorithm (or its variants) are, however, known as a \emph{galactic algorithm}: the hidden constant in the $O()$ is so large that their runtime is prohibitive for any reasonable value of $n$. Hence, the existence of these algorithms is of theoretical interest but has limited applicability.
+
+This does not discard the practical improvement provided by Subroutine \ref{algo:FMM} which is based on the mere fact that multiplying  two matrices (or inverting a matrix) is faster than three nested loops even for matrices of moderate size. To verify this, we launched  a detailed profiling of the code of Algorithm \ref{algo:whittle_n3} with the non-optimized Subroutine \ref{algo:update_X}. It shows that for a problem of dimensions $5000$, the update of Line~\ref{line:update_X} takes more than 90\% of the computation time, the initialization of $X^1$ on Line~\ref{algo2:line_inverse} takes about $5\%$ of the time and the rest of the code takes less than $1\%$ of the running time.
+
+Now, if inverting the full matrix takes about $5\%$ of the execution time, and updating the gray zone takes $95\%$, then by doing $5$ updates, one can hope to obtain an algorithm whose running time is roughly $5\times5 + 95/5\approx43\%$ the one of the original implementation. As we observe in Section~\ref{sec:numerical}, this is close to the gain that we obtain in practice. A general way to choose the best number of updates is used in the numerical section. It is based on the following reasoning. For large matrices (say $n\ge 10^3$), the fastest implementations of matrix multiplication and inversion are based on Strassen's algorithm~\cite{huang2016strassen,huang2018practical}. As we report in Appendix~\ref{apx:inversion}, the time to solve a linear system of size $n$ by using the default installation of \texttt{scipy} seems to run in $O(n^{2.8})$. By replacing the function $\omega(\alpha)$ used in Theorem \ref{th:subcubic} by a more practical bound ($\omega(\alpha)=2.8$), the best value for $\alpha$ becomes $\alpha = 0.9$. This indicates that our algorithm can be implemented in $O(n^{2.9})$ by doing $O(n^{0.1})$ recomputation of $X^k$ from $A^{\pi^k}$. Note that even for very large values of $n$ (like $n=15000$), $n^{0.1}$ remains quite small, \emph{e.g.}, $15000^{0.1}\approx 2.6$. In practice, we observe that updating $\mathrm{int}(2n^{0.1})$ times (the notation $\mathrm{int}(x)$ indicates that it is rounded to the closest integer) gives the best performance among all algorithms, as reported in the next section.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Numerical Experiments}
+\label{sec:numerical}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+In complement to our theoretical analysis, we developed a python package that implements Algorithm~\ref{algo:whittle_n3} and gives the choice of using the variant of Subroutine~\ref{algo:update_X} or of Subroutine~\ref{algo:FMM} to do the "update\_X()" function. This package relies on three python libraries: \texttt{scipy} and \texttt{numpy} for matrix operations, and \texttt{numba} to compile the python code. To facilitate its use, this package can be installed by using \texttt{pip} (for double-blind reasons, no link to the package is provided).
+
+All experiments were run on a laptop (Macbook Pro 2020) with an Intel Core i9 CPU at 2.3 GHz with 16GB of Memory using Python 3.6.9 :: Anaconda custom (64-bit) under macOS Big Sur version 11.6.2. The version of the packages are \texttt{scipy} version 1.5.4, \texttt{numpy} version 1.19.5 and \texttt{numba} version 0.53.1. The code of all experiments is available at \url{http://github.com/url-hidden-for-double-blind}.
+
+
+
+
+
+
+
+
+\subsection{Time to compute Whittle indices}
+
+To test the implementation of our algorithm, we randomly generate restless bandit instances with $n$ states where $n\in\{100,1000,\dots,15000\}$. In each case, both transition matrices are uniform probabilistic matrices: for each row of each matrix, we generate $n$ i.i.d. entries following the exponential distribution and divide the row by its sum. This means that all matrices are dense. Note that all tested matrices are indexable. This is coherent with \cite{gast2020exponential,nino2007dynamic} that report that for uniform matrices, the probability of finding a non-indexable example decreases very rapidly with the dimension $n$. Finally, reward vectors were generated from random Uniform[0,1) entries.
+
+\begin{table}[ht]
+    \caption{Running time (in seconds) of the variants of Algorithm~\ref{algo:whittle_n3}}
+    \label{table:running_time}
+    \begin{tabular}{|c|c|c||c|c|}
+        \hline
+        &\multicolumn{2}{c||}{$O(n^3)$ algorithm (Subroutine~\ref{algo:update_X})} & \multicolumn{2}{c|}{Subcubic algorithm (Subroutine~\ref{algo:FMM})}\\
+        $n$    &  (a) With index. test &  (b) Without test  & (c) With index. test &  (d) Without test  \\
+        \hline
+        100 & 0.006 & 0.004 & 0.007 & 0.005 \\
+        1000 &   0.2 &   0.2 &   0.2 &   0.2 \\
+        2000 &   1.9 &   1.2 &   1.1 &   1.0 \\
+        3000 &   7.2 &   5.0 &   3.2 &   2.6 \\
+        4000 &    17 &    12 &     8 &     6 \\
+        5000 &    34 &    25 &    16 &    12 \\
+        6000 &    60 &    43 &    27 &    20 \\
+        7000 &    95 &    68 &    42 &    33 \\
+        8000 &   142 &    99 &    63 &    49 \\
+        9000 &   199 &   141 &    92 &    70 \\
+        10000 &   275 &   191 &   122 &    95 \\
+        11000 &   361 &   257 &   164 &   133 \\
+        12000 &   471 &   339 &   225 &   190 \\
+        13000 &   620 &   428 &   286 &   243 \\
+        14000 &   790 &   553 &   408 &   317 \\
+        15000 &   965 &   685 &   501 &   403 \\
+        \hline
+    \end{tabular}
+\end{table}
+We record the runtime of the different variants of our algorithm and report the results in Table~\ref{table:running_time}. Note that these results present the whole execution time of the algorithm, including the initialization phase in which $X^1$ is computed. For each value of $n$, we run Algorithm~\ref{algo:whittle_n3} with four variants: 
+\begin{itemize}
+    \item The first two correspond to the $O(n^3)$ algorithm (that uses Subroutine~\ref{algo:update_X} for Line~\ref{line:update_X}), either (a) with the indexability test, or (b) without the indexability test. 
+    \item The next two correspond to the subcubic algorithm (that uses Subroutine~\ref{algo:FMM} for Line~\ref{line:update_X} with int($2n^{0.1}$) updates), either (c) with the indexability test, or (d) without the indexability test.
+\end{itemize}
+Our numbers show that our algorithm can compute the Whittle index in less than one second for $n=1000$ states and slightly less than $7$ minutes for $n=15000$ states with variant (d). As expected, not doing the indexability test does improve the performance compared to doing the indexability test (here by a factor approximately $1/3$ for Subroutine~\ref{algo:update_X} and $1/5$ for Subroutine~\ref{algo:FMM}). More importantly, this table shows that the time when using the subcubic variant, Subroutine~\ref{algo:FMM}, diminishes the computation time by about 40\% to 50\% compared to when using Subroutine~\ref{algo:update_X}. Note that for $n=100$, using the Subroutine~\ref{algo:update_X} is slightly faster than using the subroutine~\ref{algo:FMM} (note that both takes only a few milliseconds). This indicates that the subcubic algorithm becomes interesting when $n$ is large enough (say $n\ge2000$).
+
+To give a visual idea of how the various variants of the algorithms compare, we plot in Figure~\ref{fig:benchmark_algo_whittle_generic} the runtime of the four variants along with the runtime reported \cite{nino2020fast}, that we believe was the fastest algorithm to compute Whittle index so far. We plot in Figure~\ref{fig:speedup} the runtime of each variant divided by the runtime of the algorithm of \cite{nino2020fast}. For large $n$, our best implementation is about $10$ to $20$ times faster than the one of \cite{nino2020fast}. For instance, for $n=15000$, our implementation takes about $7$ minutes to compute the index (or $9$ minutes when checking indexability) whereas \cite{nino2020fast} reports $2$ hours. Recall that the algorithm of \cite{nino2020fast} cannot check indexability. In our implementation, not testing indexability reduces the computation time of $15-20\%$ for Subroutine~\ref{algo:FMM} or $25-30\%$ for Subroutine~\ref{algo:update_X} compared to the version that tests indexability.
+
+
+It should be clear that the comparison between our implementation and the numbers reported in \cite{nino2020fast} has its limits. First, there is no public implementation of the algorithm of \cite{nino2020fast} and we did not re-implement it. Hence, the computation was not done on the same machine, and not implemented in the same programming language. The characteristic of the machine described in \cite{nino2020fast} seems comparable if not better to ours, and our implementation is in python/numpy whereas the one of \cite{nino2020fast} is in matlab.  Second, it is written in \cite{nino2020fast} that the reported numbers do not ``count the initialization stage of computing the initial tableau''. There is no mention of the cost of the initialization stage in \cite{nino2020fast}. On the contrary, the numbers that we report in this paper include all initialization stage, which puts our running time at disadvantage. 
+
+\begin{figure}[ht]
+    \begin{tabular}{cc}
+        \begin{subfigure}[t]{0.45\linewidth}
+            \includegraphics[width=\linewidth]{runtime_algorithms}
+            \caption{Runtime of our implementations as a function of the state size $n$.}
+            \label{fig:benchmark_algo_whittle_generic}
+        \end{subfigure}            
+        &\begin{subfigure}[t]{0.45\linewidth}
+            \includegraphics[width=\linewidth]{speedup}
+            \caption{Speedup of each implementation over the data from \cite{nino2020fast} as a function of the state size $n$.}
+            \label{fig:speedup}
+        \end{subfigure}
+    \end{tabular}
+    \caption{Numerical result over 7 simulations taking around 21 hours in total: in each simulation, we run the algorithm over randomly generated RBs with the state size ranging over $\{1000,\dots,15000\}$. We plot the average runtime over 7 simulations. The solid lines represent the result of Subroutine~\ref{algo:update_X} and the dashed-dot lines represent the one of Subroutine~\ref{algo:FMM}. The marker ``$+$'' indicates that algorithms test indexability and the triangles indicates that algorithms do not test indexability.}
+    \label{fig:numerical_result}
+\end{figure}
+
+\subsection{Statistics of indexable problems}
+
+To the best of our knowledge, our algorithm provides the first indexability test that scales well with the dimension $n$. We used this to answer a very natural question: given a randomly generated bandit, how likely is it to be indexable? This question was partially answered in \cite{nino2007dynamic} that shows that when generating dense RBs, the probability of generating a non-indexable RB is close to $10^{-n}$ for $n\in\{3\dots7\}$. This suggests that most RBs are indexable. Below, we answer two questions: what happens for larger values of $n$, and more importantly, what happens when the RBs are not dense? 
+
+To answer these questions, we consider randomly generated RBs where the matrices $P^0$ and $P^1$ are $b$-diagonal matrices with $b$  non-null diagonals. In particular, $b=3$ corresponds to tridiagonal matrices, $b=5$ corresponds to pentadiagonal matrices and $b=7$ corresponds to septadiagonal matrices. We also compare with the classical case of dense matrices (which corresponds to $b=2n-1$).  For each model, the entries are generated from the exponential distribution for each row and we divide the row by the sum of generated entries for this row.   We vary $n$ from $3$ to $50$ and for each case, we generate $100000$ RBs. We report in Table~\ref{tb:number_indexable} the number of indexable RBs for each. Note that pentadiagonal matrices are dense matrices for $n=3$ and septadiagonal matrices are dense matrices for $n=4$ and do not make sense for $n=3$, which is why no numbers are reported.
+
+\begin{table}[ht]
+    \caption{Number of indexable problems among $100\,000$ randomly generated problems.}
+    %\vspace{-.5cm}
+    \label{tb:number_indexable}
+    \begin{tabular}{|l|r|r|r|r|}
+        \hline
+        $n$ &  Tridiagonal &  5-diagonal &  7-diagonal &  Dense \\
+        \hline
+        3  &     98\,731 &        -- &        -- &   99\,883 \\
+        4  &     95\,067 &     99\,655 &        -- &   99\,931 \\
+        5  &     89\,198 &     99\,309 &     99\,902 &   99\,969 \\
+        10 &     54\,129 &     90\,377 &     98\,914 &  100\,000 \\
+%        20 &     17\,749 &     55\,267 &     86\,845 &  100\,000 \\
+        30 &      7\,094 &     29\,699 &     66\,143 &  $100\,000$ \\
+%        40 &      3\,356 &     15\,949 &     46\,478 &  $100\,000$ \\
+        50 &      1\,823 &      9\,332 &     32\,069 &  $100\,000$ \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Based on these results, we can assert that dense models are essentially always indexable which conforms with the data reported in \cite{nino2007dynamic}. The situation is, however, radically different for sparse models: the number of indexable problems decreases quickly with the number of states. For instance, there are only $1\,823$ indexable $50$-state problems among $100\,000$ generated tridiagonal models (\emph{i.e.} around $1.8\%$ are indexable). Note that a tridiagonal model is a birth-death Markov chain which is frequently used for queueing systems. Hence, it is very important to check the indexability of the problem because it is not a prevalent property for sparse models. This also calls for new efficient policies in multi-arm bandits problems that are not based on Whittle indices.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Extension to the discounted case and Gittins index}
+\label{sec:discounted}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The model described in Section~\ref{sec:bandits} corresponds to the definition of Whittle index for a time-average criterion, for which Whittle index is known to be asymptotically optimal \cite{weber1990index} for restless bandits. Yet, Whittle index can also be defined for the discounted case \cite{nino2020fast, akbarzadeh2020conditions}. Notably, the discounted Whittle index simplifies into Gittins index when the bandit is rested (\emph{i.e.}, when $P^0=I$ and $\br^0=0$.) In this section, we show how to adapt our algorithm to the discounted case. As a by product, we obtain the first subcubic algorithm to compute Gittins index in the discounted case.
+
+\subsection{Discounted Whittle Index}
+
+We now consider a $\widx$-penalized RB process in which the instantaneous reward received at time $t$ is discounted by a factor $\beta^t$, where $\beta\in(0,1)$ is called the discount factor: when executing action $a$ in state $i$ at time $t$, the decision maker earns a reward $\beta^t (r^a_i - \lambda a)$. For a given policy $\pi$, we denote by $u^\pi_i(\lambda)$ the expected discounted reward earned by the decision maker when the RB starts in state $i$ at time $0$. The vector $\bu^\pi(\lambda)=[u^\pi_1(\lambda)\dots u^\pi_n(\lambda)]^T$ is called the value function of the policy $\pi$. From \cite{putermanMarkovDecisionProcesses1994}, it satisfies Bellman's equation, that is, for all state $i$ we have: 
+\begin{align}
+    \label{eq:u^pi_discounted}
+    u^\pi_i(\lambda) = r_i^{\pi_i} - \lambda \pi_i + \beta \sum_{j=1}^n P^{\pi_i}_{ij} u^\pi_j(\lambda).
+\end{align}
+The above equation is a linear equation, whose solution is unique because $\beta<1$. It is given by:
+\begin{align}
+    \label{eq:h is linear discounted}
+    \bu^\pi(\lambda) = (I - \beta P^\pi)^{-1}(\br^{\pi} - \lambda \bpi).
+\end{align}
+For a given penalty $\lambda$ and a state $i$, we denote by $u^*_i(\lambda)=\max_\pi u^\pi_i(\lambda)$ be the optimal value of state $i$.  A policy $\pi$ is optimal for the penalty $\lambda$ if for all state $i\in[n]$, $u^*_i(\lambda)=u^\pi_i(\lambda)$. By~\cite{putermanMarkovDecisionProcesses1994} such a policy exists.  Similarly to the time-average criterion studied before, a $\beta$-discounted RB is called indexable if for all state $i\in[n]$, there exists a critical penalty $\lambda_i$ such that the action "activate" is optimal in state $i$ if and only if $\lambda_i\ge\lambda$. 
+
+\subsection{Analogy between the time-average and the discounted versions}
+
+Let $\pi$ be a policy and $i\in\pi$ be an active state. By Equation~\eqref{eq:u^pi_discounted}, the two actions "rest" and "activate" are equivalent in state $i$ if and only if 
+\begin{align*}
+    r^1_i - \lambda + \beta \sum_{j=1}^n P^{1}_{ij} u^*_j(\lambda) = r^0_i + \beta \sum_{j=1}^n P^{0}_{ij} u^*_j(\lambda),
+\end{align*}
+which is equivalent to
+\begin{align}
+    \label{eq:mu^k_i discounted}
+    \lambda = \delta_i + \tilde{\Delta}_i \bu^\pi(\lambda),
+\end{align}
+where $\delta_i$ is defined as for the time-average case and $\tilde{\Delta}$ is such that for all\footnote{Note that the definition of $\tilde{\Delta}$ is identical to $\Delta$ except when $j=1$, for which $\Delta_{i1}:=0$ but $\tilde{\Delta}_{i1}=\beta(P^1_{i1}-P^0_{i1})$.} states $i,j\in[n]$: $\tilde{\Delta}_{ij}:=\beta(P^1_{ij}-P^0_{ij})$.   This equation is the same as its time-average analogue \eqref{eq:mu^k_i}, but replacing $\Delta$ by $\tilde{\Delta}$.
+
+To finish the derivation of the algorithm, one should note that the value function $\bu(\lambda)$ plays the same role as the vector $\bv(\lambda)$ defined for the time-average case. In particular, the definition of $\bu$ in Equation~\eqref{eq:h is linear discounted} is the analogue of the definition of $\bv$ in \eqref{eq:h is linear} up to the replacement of the matrix $A^\pi$ in \eqref{eq:h is linear} by the matrix $I-\beta P^\pi$. This means that similarly to $\bv$, the value function $\bu(\widx)$ is affine in $\lambda$.
+
+Hence, following the same development in Section~\ref{sec:formal_widx_algo}, we can modify Algorithm~\ref{algo:whittle_n3} to compute the discounted Whittle index by modifying only the initialization phase:
+\begin{align*}
+    \tilde{\Delta}=\beta(P^1-P^0) \text{ and } X^1=\tilde{\Delta}(I-\beta P^{\pi^1})^{-1}.
+\end{align*}
+
+Note that we still have $\by^1=\pmb{0}$ because $(I-\beta P^{\pi^1})^{-1}\bpi^1=\frac1{1-\beta}\pmb{1}$ (value function in a $\beta$-discounted Markov chain with reward equals to $1$ in all states) and $\tilde{\Delta}\pmb{1}=\pmb{0}$. Also, if Subroutine~\ref{algo:FMM} is used, Line~\ref{algoFMM:recompute} should be changed to $X^{k_0}=\tilde{\Delta}(I-\beta P^{\pi^{k_0}})^{-1}$. Last but not least, in the discounted case, the unichain property is no longer needed because the matrix $(I-\beta P^\pi)$ is invertible for any policy $\pi$ as long as $\beta<1$ (from Perron-Frobenius' Theorem).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Gittins Index}
+
+The notion of "restless" bandit comes from the fact that even when the action "rest" is taken, the Markov chain can still change state and generate rewards. When this is not the case (\emph{i.e.}, when $P^0=I$ and $r^0=0$), a RB is no longer restless and is simply called a Markovian bandit (or a \emph{rested} Markovian bandit if one wants to emphasize that it is not restless).
+
+In a discounted rested bandit, the notion of Whittle index coincides\footnote{In fact, Whittle index was first introduced as a generalization of Gittins index to restless bandit in \cite{whittle1988restless}.} with the notion of Gittins index. In such a case, there is no notion of indexability: a discounted rested bandit is always indexable. Its index can be computed by Algorithm~\ref{algo:whittle_n3} without testing indexability. The best known algorithm to compute Gittins index runs in $(2/3) n^3 +O(n^2)$ \cite{chakravortyMultiArmedBanditsGittins2014}. When using fast multiplication, our algorithm computes Gittins index in $O(n^{2.5286})$ which makes it the first algorithm to compute Gittins index in subcubic time.  
+
+Note that when $P^1=I$, it is possible to compute $X^1=\tilde{\Delta}/(1-\beta)$ without having to solve a linear system which means that, when $P^1=I$, our algorithm with the variant Algorithm~\ref{algo:update_X} has the complexity $(2/3) n^3 +O(n^2)$ complexity. This shows that our cubic algorithm can compute the Gittins index in $(2/3) n^3 +O(n^2)$ by switching $(P^0,\br^0)$ and $(P^1,\br^1)$. 
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Conclusion}
+\label{sec:conclusion}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+In this paper, we present an algorithm that is efficient for detecting the non-indexability and computing Whittle index of all indexable finite-state restless bandits. Our algorithm is based on the efficient application of Sherman-Morrison formula. This algorithm works for both discounted and non-discounted restless bandits, and can also be used for Gittins index computation.   We present a first version of our algorithm that runs in $n^3+o(n^3)$ arithmetic operations (or in $(2/3)n^3+o(n^3)$ if we do not test the indexability). So, we conclude that Whittle index is not harder to compute than Gittins index. The second version of our algorithm uses fast matrix multiplication and has a complexity of $O(n^{2.5286})$. This makes it the first subcubic algorithm to compute Whittle index or Gittins index. We provide numerical simulations that show that our algorithm is very efficient in practice: it can test indexability and compute the index of a restless bandit process in less than one second for $n=1000$ states, and in a few minutes for $n=15000$. These numbers are provided for dense matrices. One might expect to have more efficient algorithms if the process has a sparse structure. We leave this question for future work. 
+
+
+% The bibliography:
+\newpage
+\bibliography{refWhittleIndex}
+
+%\newpage 
+
+\appendix
+
+
+
+\section{Technical lemmas}
+
+
+
+
+
+\subsection{Minimal Optimal policy}
+\begin{lemma}
+    \label{lem:structure_optimal}
+    Let $\lambda$ be a fixed penalty and consider that there exist two distinct optimal policies $\pi\ne\pi'$. Then:
+    \begin{enumerate}
+        \item The policy $\pi\cap\pi'$ is also optimal for this penalty.
+        \item If $\pi\supset\pi'$, then for  $i\in\pi \supset \pi'$,  $\pi\setminus\{i\}$ is also optimal for this penalty. %if pi is not the smallest, than there exists a smaller policy
+    \end{enumerate}
+\end{lemma}
+
+\begin{proof}
+    By Section~8.4 of \cite{putermanMarkovDecisionProcesses1994}, and since the RB is unichain,  there exists a bias vector $h^*(\lambda)$ such that $\pi$ is an optimal policy if and only if for all state $i$:
+    \begin{align}
+        r^1_i - \lambda + \sum_{j=2}^n P^{1}_{ij} h^*_j(\lambda) &> r^0_i + \sum_{j=2}^n P^{0}_{ij} h^*_j(\lambda) &\text{ implies 
+        $i\in\pi$;}\label{lem:structure1}\\
+        r^1_i - \lambda + \sum_{j=2}^n P^{1}_{ij} h^*_j(\lambda) &< r^0_i + \sum_{j=2}^n P^{0}_{ij} h^*_j(\lambda) &\text{ implies $i\not\in\pi$.}
+        \label{lem:structure2}
+    \end{align}
+    It should be clear that if both $\pi$ and $\pi'$ satisfy \eqref{lem:structure1}--\eqref{lem:structure2}, then so does $\pi\cap\pi'$ which implies that it is also an optimal policy. 
+    
+    Note that in particular, if $\pi\supsetneq\pi'$ are two optimal policies, then let $i\in\pi\setminus\pi'$. This state must be such that
+    $r^1_i - \lambda + \sum_{j=2}^n P^{1}_{ij} h^*_j(\lambda) = r^0_i + \sum_{j=2}^n P^{0}_{ij} h^*_j(\lambda)$ which implies that $\pi\setminus\{i\}$ satisfies \eqref{lem:structure1}--\eqref{lem:structure2} and is therefore also an optimal policy. 
+\end{proof}
+
+\subsection{Unichain property}
+
+\begin{lemma}
+\label{lem:invertible}
+Given a MDP $\langle [n], \{0,1\}, r, P\rangle$, let $P^\pi$ be the transition matrix under policy $\pi$.
+If the MDP is \emph{unichain}, the matrix
+\begin{align*}
+    A^{\pi}
+        = \left[\begin{array}{ccccc}
+                1 & - P_{12}^{\pi} & \dots & -P_{1n}^{\pi}\\
+                1 & 1-P_{22}^{\pi} & \dots & -P_{2n}^{\pi}\\
+                \vdots\\
+                1 &  -P_{n2}^{\pi} & \dots &1-P_{nn}^{\pi}
+    \end{array}\right]
+\end{align*}
+is invertible for any policy $\pi$.
+\end{lemma}
+\begin{proof}
+    $A^\pi$ is not invertible, if there exists a vector $\bff{u}\neq\bff{0}$ such that $\bff{u}^T A^\pi=\bff{0}$.
+    We proof that such $\bff{u}$ does not exist when the MDP is unichain.
+    Let $\bff{u}\in\R^n$ be an arbitrary vector such that $\bff{u}^T A^\pi=\bff{0}$.
+    Then, we have
+    \begin{align*}
+        \begin{cases}
+            \sum_{i=1}^{n}u_i &= 0 \\
+            u_i-\sum_{j=1}^{n}u_jP_{ji}^\pi &= 0, \text{ for } 2\le i\le n
+        \end{cases}
+    \end{align*}
+    Then,
+    \begin{align*}
+        \sum_{i=1}^{n}u_i
+        &= u_1 +\sum_{i=2}^{n}u_i \\
+        0 &= u_1 +\sum_{i=2}^{n}\sum_{j=1}^{n}u_jP_{ji}^\pi = u_1 +\sum_{j=1}^{n}u_j\sum_{i=2}^{n}P_{ji} = u_1 +\sum_{j=1}^{n}u_j(1-P_{j1}^\pi) \\
+        0 &= u_1 -\sum_{j=1}^{n}u_jP_{j1}^\pi
+    \end{align*}
+    Then, we get
+    \begin{align*}
+        \begin{cases}
+            \sum_{i=1}^{n}u_i &= 0 \\
+            \bff{u}^TP^\pi &=\bff{u}^T
+        \end{cases}
+    \end{align*}
+    In unichain MDP, for any policy $\pi$, the only vectors $\bff{u}$ verifying $\bff{u}^TP^\pi=\bff{u}^T$ are multiples of  the stationary distribution under policy $\pi$ \cite{putermanMarkovDecisionProcesses1994}. Therefore  $\sum_{i=1}^{n}u_i = 0$ implies $\bff{u} = 0$.
+%    However, such vector is a distribution, \emph{i.e.}, $\sum_{i=1}^{n}u_i=1$.
+  \end{proof}
+
+\subsection{Proof of Lemma \ref{lem:mu^k_i}}\label{app:lem:mu^k_i}
+
+\begin{proof}
+    Let $\bv^{\pi}(\lambda)$ be as in Equation~\eqref{eq:h is linear}. By definition, the matrices $A^{\pi}$ and $A^{\pi\setminus\{i\}}$ differ only in  row $i$, that is, for $i\in\pi$
+    \begin{align*}
+        (A^\pi)_i &=[1\quad -P^1_{i2}\quad \dots\quad -P^1_{ii-1}\quad 1-P^1_{ii}\quad -P^1_{ii+1}\quad \dots\quad -P^1_{in}] \\
+        \text{and } (A^{\pi\setminus\{i\}})_i &=[1\quad -P^0_{i2}\quad \dots\quad -P^0_{ii-1}\quad 1-P^0_{ii}\quad -P^0_{ii+1}\quad \dots\quad -P^0_{in}].
+    \end{align*}
+    This implies that \eqref{eq:pre_lin_eq} with $\pi{\setminus}\{i\}$ holds for all $j\ne i$: $(A^{\pi}v^{\pi}(\lambda))_j = (A^{\pi{\setminus}\{i\}}v^{\pi}(\lambda))_j= r_j^{\pi_j}-\lambda\pi_j$. Moreover, if $\lambda$ is such that \eqref{eq:mu^k_i} holds, then
+    \begin{align*}
+        r^1_i - \lambda + \sum_{j=2}^n P^{1}_{ij} v^\pi_j(\lambda) &= r^0_i + \sum_{j=2}^n P^{0}_{ij} v^\pi_j(\lambda).
+    \end{align*}
+    %This implies that $(A^{\pi}v^{\pi}(\lambda))_i = (A^{\pi\cup\{i\}}v^{\pi}(\lambda))_i$. This implies that $v^\pi(\lambda)$ is a solution of $A^{\pi\cup\{i\}} \bv^\pi(\widx)= \br^{\pi\cup\{i\}} - \lambda (\bpi-\be_i)$, which implies that $v^\pi(\lambda)=v^{\pi\cup\{i\}}(\lambda)$. 
+    So, for any $i\in\pi$,
+    \begin{align*}
+        g^{\pi}(\widx) + v_i^{\pi}(\widx) &=r^1_i -\widx +\sum_{j=2}^n P^{1}_{ij} v^\pi_j(\lambda) =r^0_i + \sum_{j=2}^n P^{0}_{ij} v^\pi_j(\lambda) \\
+        g^{\pi}(\widx) + v_i^{\pi}(\widx) -\sum_{j=2}^n P^{0}_{ij} v^\pi_j(\lambda) &=r^0_i \text{ or } (A^{\pi\setminus\{i\}}v^{\pi}(\lambda))_i = r^0_i.
+    \end{align*}
+    This implies that $\bv^\pi(\lambda)$ is a solution of $A^{\pi\setminus\{i\}} \bv^\pi(\widx)= \br^{\pi\setminus\{i\}} - \lambda (\bpi-\be_i)$, which implies that $v^\pi(\lambda)=v^{\pi\setminus\{i\}}(\lambda)$. Note that $\be_i$ is the column vector where all entries are equal to $0$ except for the $i$-th, equal to 1.
+\end{proof}
+
+  
+
+\section{Implementations}
+\label{apx:implementation}
+
+
+
+\subsection{Arithmetic complexity of Algorithm~\ref{algo:update_X} and memory usage}
+
+Recall that in Algorithm~\ref{algo:update_X}, we compute the values $X^{\ell}_{ij}$ by doing the update (for all iteration $k$, for all $\ell=1$ to $k$ and for all $i\in[n]$ or all $i\in\pi^{\ell+1}$ if we do not test indexability):
+\begin{align}
+    \label{eq:apx_update}
+    X_{i\sigma^{k}}^{\ell+1} := X_{i\sigma^{k}}^{\ell} -\displaystyle\frac{X^{\ell}_{i\sigma^{\ell}}}{1+X^{\ell}_{\sigma^{\ell}\sigma^{\ell}}} X^{\ell}_{\sigma^{\ell}\sigma^{k}}    
+\end{align}
+If we test indexability, there are $\sum_{k=1}^nk n = n^3/2+O(n^2)$ such updates. If we do not test indexability, there are $\sum_{k=1}^n \sum_{\ell=1}^k (n-\ell) = n^3/3 + O(n^2)$ such updates.  Below, we show each update of Equation~\eqref{eq:apx_update} can be done in two arithmetic operations (one addition and one multiplication), which leads to the complexity of $n^3+O(n^2)$ (or $(2/3)n^3+O(n^2)$) arithmetic operations for the computation of all the needed $X^k_{ij}$.  We also show how to reduce the memory size to $O(n^2)$.
+
+Let $W_{ik} = X^k_{i \sigma^k}/(1+X^k_{\sigma^k\sigma^k})$ and $V^k_{i\ell} = X_{i\sigma^{k}}^{\ell}$. Using this, Equation~\eqref{eq:apx_update} can be rewritten as: 
+\begin{align}
+    \label{eq:apx_update_V}
+    V^k_{i\ell+1} = V^k_{i\ell} - W_{i\ell} V^k_{\sigma^\ell\ell},
+\end{align}
+with $W_{ik} = V^k_{ik}/(1+V^k_{\sigma^kk})$. 
+
+This results in the following loop at iteration $k$:
+\begin{itemize}
+    \item Initialize $V^k_{i1}$ from $X^1_{i\sigma^k}$. 
+    \item For all $\ell\in\{1\dots k-1\}$, and all $i\in[n]$ (or $i\in\pi^{\ell+1}$), apply \eqref{eq:apx_update_V}. 
+    \item Compute $W_{ik}= V^k_{ik}/(1+V^k_{\sigma^kk})$
+    \item For $\ell=k$, and all $i\in[n]$ (or $i\in\pi^{\ell+1}$), apply \eqref{eq:apx_update_V}.
+\end{itemize}
+Note that the value of $V^{k-1}$ is not necessary for iteration $k$ (only the values of $W_{i\ell}$ are needed). This shows that the algorithm can be implemented with a memory $O(n^2)$. Moreover, each update of \eqref{eq:apx_update} can be implemented by $2$ arithmetic operations (one multiplication and one subtraction). 
+
+\subsection{Speedup when not checking the indexability: First found Go last} 
+
+When the indexability is not tested, the update \eqref{eq:apx_update_V} is computed for all $i\in\pi^{\ell+1}$. This creates inefficiencies (due to  inefficient cache usage) because the elements $V^k_{i\ell+1}$ are not accessed sequentially.
+
+To speedup the memory accesses, our solution is to sort the items during the execution of the algorithm. At iteration $k$, the algorithm computes $\sigma^{k}$. When this is done, our implementation switches all quantities in positions $\sigma^{k}$ and $n-k+1$. These quantities are $\delta, y, z, W$ and $X$. For instance, once $\sigma^1$ is found, we know that the state at position $n$ is state $n$ and we do the following switches:
+\begin{align*}
+    \delta_{\sigma^1}, \delta_{n} &\rightarrow \delta_{n}, \delta_{\sigma^1} \\
+    y^1_{\sigma^1}, y^1_{n} &\rightarrow y^1_{n}, y^1_{\sigma^1} \\
+    z^1_{\sigma^1}, z^1_{n} &\rightarrow z^1_{n}, z^1_{\sigma^1} \\
+    W_{\sigma^1 }, W_{n } &\rightarrow W_{n}, W_{\sigma^1 } \\
+    \text{ and } X_{\sigma^1 }, X_{n } &\rightarrow X_{n}, X_{\sigma^1 }.
+\end{align*}
+
+To do so, we need an array to store all states such that at iteration $k$, the first $n-k$ states of the array are the active states. We will need to track the position of each state in such array.
+% Let $\Sigma$ and $I$ be these two arrays:
+% \begin{itemize}
+%     \item at iteration $k$, $\Sigma_{1:n-k}$ are the active states and for $0<\ell<k, \Sigma_{n-\ell+1}$ gives state $\sigma^{\ell}$
+%     \item for any state $i$, $I_{i}$ gives the its position in array $\Sigma$.
+% \end{itemize}
+% Effectively, at iteration $k>1$, we know $\sigma^{k-1}$ and want to send it to position $n-k+2$. So, array $\Sigma$ tells us which state occupies the position $n-k+2$. Also, array $I$ tells us the position of state $\sigma^{k-1}$ in $\Sigma$.
+% So, we do
+% \begin{align*}
+%     \Sigma_{I_{\sigma^{k-1}}}, \Sigma_{n-k+2} &\rightarrow \Sigma_{n-k+2}, \sigma^{k-1}  \\
+%     I_{\sigma^{k-1}}, I_{\Sigma_{n-k+2}} &\rightarrow n-k+2, I_{\sigma^{k-1}}.
+% \end{align*}
+% We illustrate this idea in Figure~\ref{fig:ill_implem}. Now, we apply this idea to the above quantities:
+% \begin{align*}
+%     \delta_{I_{\sigma^{k-1}}}, \delta_{n-k+2} &\rightarrow \delta_{n-k+2}, \delta_{I_{\sigma^{k-1}}} \\
+%     y^{k-1}_{I_{\sigma^{k-1}}}, y^{k-1}_{n-k+2} &\rightarrow y^{k-1}_{n-k+2}, y^{k-1}_{I_{\sigma^{k-1}}} \\
+%     z^{k-1}_{I_{\sigma^{k-1}}}, z^{k-1}_{n-k+2} &\rightarrow z^{k-1}_{n-k+2}, z^{k-1}_{I_{\sigma^{k-1}}} \\
+%     W_{I_{\sigma^{k-1}}:}, W_{n-k+2:} &\rightarrow W_{n-k+2:}, W_{I_{\sigma^{k-1}}:} \\
+%     \text{ and } X_{I_{\sigma^{k-1}}:}, X_{n-k+2:} &\rightarrow X_{n-k+2:}, X_{I_{\sigma^{k-1}}:}.
+% \end{align*}
+% Then, if we do not check the indexability, we do
+% \begin{align*}
+%     \text{ for } \iota\in\{1,\dots,n-k\}, \mu^k_\iota =\frac{\delta_\iota +\beta z^{k-1}_\iota-\mu^{k-1}_{\min} \beta y^k_\iota}{1-\beta y^k_\iota}.
+% \end{align*}
+% Let $\iota_{\min}$ be the index such that $\mu^k_{\iota_{\min}}=\mu^k_{\min}= \displaystyle\min_{\iota\in\{1,\dots,n-k\}}\mu^k_\iota$. Then, we have state $\sigma^k=\Sigma_{\iota_{\min}}$ and we go to iteration $k+1$.
+
+% \begin{figure}
+%     At iteration $1, \qquad$
+%     \begin{tabular}{lc|lc}
+%         $\Sigma$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           1 & 2 & 3 & 4 \\
+%           1 & 2 & 3 & 4 \\
+%         };
+%         \end{tikzpicture} &
+%         $I$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           1 & 2 & 3 & 4 \\
+%           1 & 2 & 3 & 4 \\
+%         };
+%         \end{tikzpicture}
+%     \end{tabular} \\
+%     At iteration $2$, $\sigma^1=1$,
+%     \begin{tabular}{lc|lc}
+%         $\Sigma$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           1 & 2 & 3 & 4 \\
+%           4 & 2 & 3 & $\sigma^1=1$ \\
+%         };
+%         \end{tikzpicture} &
+%         $I$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           $\sigma^1=1$ & 2 & 3 & 4 \\
+%           4 & 2 & 3 & 1 \\
+%         };
+%         \end{tikzpicture}
+%     \end{tabular} \\
+%     At iteration $3$, $\sigma^2=4$,
+%     \begin{tabular}{lc|lc}
+%         $\Sigma$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           1 & 2 & 3 & 4 \\
+%           3 & 2 & $\sigma^2=4$ & $\sigma^1$ \\
+%         };
+%         \end{tikzpicture} &
+%         $I$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           $\sigma^1$ & 2 & 3 & $\sigma^2=4$ \\
+%           4 & 2 & 1 & 3 \\
+%         };
+%         \end{tikzpicture}
+%     \end{tabular} \\
+%     At iteration $4$, $\sigma^3=3$,
+%     \begin{tabular}{lc|lc}
+%         $\Sigma$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           1 & 2 & 3 & 4 \\
+%           2 & $\sigma^3=3$ & $\sigma^2$ & $\sigma^1$ \\
+%         };
+%         \end{tikzpicture} &
+%         $I$ &
+%         \begin{tikzpicture}
+%         \matrix (m) [matrix of nodes,
+%                      nodes={draw, minimum size=8mm,anchor=center},
+%                      nodes in empty cells, minimum height = 1cm,
+%                      row 1/.style={nodes={draw=none}},]
+%         {
+%           $\sigma^1$ & 2 & $\sigma^3=3$ & $\sigma^2$ \\
+%           4 & 1 & 2 & 3 \\
+%         };
+%         \end{tikzpicture}
+%     \end{tabular}
+% \caption{Illustration in a 4-state RB process.}
+% \label{fig:ill_implem}
+% \end{figure}
+
+
+
+\section{Analysis of the experimental time to solve a linear system}
+\label{apx:inversion}
+
+In this section, we report in Figure~\ref{fig:benchmark_inverse} the time taken by the default implementation to solve a linear system of the form $AX=B$ where $A$ and $B$ are two square matrices. To obtain this figure, we generated random (full) matrices where each entry is between $0$ and $1$ and use the function  \texttt{scipy.linalg.solve} from the library \texttt{scipy}. The reported numbers suggest that the complexity of the solver is closer to $O(n^{2.8})$ than to $O(n^3)$, although we agree that the difference between the $O(n^{2.8})$ and the $O(n^3)$ curves is small. Note that this is in accordance with the papers \cite{huang2016strassen,huang2018practical} that claim that the fastest implementations of matrix multiplication and inversion are based on Strassen's algorithm and should therefore be in $O(n^{2.8})$. 
+
+\begin{figure}[ht]
+    \centering
+    \begin{tabular}{cc}
+        \begin{minipage}{0.5\linewidth}
+            \includegraphics[width=\linewidth]{execution_time_solve}
+        \end{minipage}
+        %\includegraphics[width=0.4\linewidth]{execution_time_inversion}
+        %&\includegraphics[width=0.4\linewidth]{execution_time_multiplication}\\
+        &\begin{minipage}{0.45\linewidth}
+            \begin{tabular}{|c|c|}
+                \hline
+                $n$ & Time (in second)\\\hline
+                1000 & $ 0.03\pm0.02$ \\
+                2000 & $ 0.24\pm0.01$ \\
+                4000 & $ 1.83\pm0.05$ \\
+                5000 & $ 3.6\pm0.3$ \\
+                7000 & $ 8.7\pm0.5$ \\
+                10000 & $23.7\pm0.6$ \\
+                13000 & $54.0\pm2.5$ \\
+                15000 & $80.8\pm1.8$ \\                
+                \hline
+            \end{tabular}
+        \end{minipage}
+    \end{tabular}
+    \caption{Time taken of the default implementations \texttt{scipy.linalg.solve} of scipy to solve a linear system $AX=B$ where $A$ and $B$ are two square $n\times n$ matrices.}
+    \label{fig:benchmark_inverse}
+\end{figure}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Detailed comparison with \cite{akbarzadeh2020conditions} and \cite{nino2020fast}}
+\label{apx:comparison}
+
+In this section, we compare our algorithm with two main related works for finite-state restless bandits problem.
+
+\subsection{Comparison with  \cite{akbarzadeh2020conditions}}
+The paper presents an  algorithm that computes Whittle indices  in $O(n^3)$ (no explicit constant before $n^3$ is given) for all indexable problems. Despite following a different approach, our algorithm for computing Whittle index can be viewed as a refinement of this work. Let us recall once again that our approach also allows one to check the indexability of general restless bandits.
+
+In the following, we show how we can refine the work of \cite{akbarzadeh2020conditions} to obtain an algorithm that is exactly the same as ours.
+%Let $\Phi^\pi$ be a square matrix and $D^{\pi}$ and $N^{\pi}$ be two vectors defined as in \cite{akbarzadeh2020conditions},
+Let $D^{\pi}$ and $N^{\pi}$ be two vectors defined as in \cite{akbarzadeh2020conditions},
+\begin{align*}
+    %\Phi^\pi = (I-\beta P^\pi)^{-1}, \quad
+    D^{\pi} =(1-\beta)(I-\beta P^\pi)^{-1}\br^{\pi}, \quad\text{and}\quad
+    N^{\pi} =(1-\beta)(I-\beta P^\pi)^{-1}\bpi.
+\end{align*}
+Then, we have $D^{\pi} -\widx N^{\pi}=(1-\beta)\bu^{\pi}(\widx)$ where $\bu^{\pi}(\widx)$ is defined as in \eqref{eq:u^pi_discounted}. In our proposition, at each iteration $k$, we compute $\mu_i^k$ by Line~\ref{algo2:muki}. Instead, it is defined in \cite{akbarzadeh2020conditions} by two steps:
+\begin{enumerate}
+\item for all state $j\in[n]$ such that $N_j^{\pi^k\setminus\{i\}}\neq N_j^{\pi^k}$, compute $\mu^k_{ij}=\displaystyle\frac{D_j^{\pi^k\setminus\{i\}} -D_j^{\pi^k}}{ N_j^{\pi^k\setminus\{i\}} -N_j^{\pi^k}}$ 
+\item \label{it:mu^k_i*} compute $\mu^k_i=\displaystyle\argmin_{j\in[n]:N_j^{\pi^k\setminus\{i\}}\neq N_j^{\pi^k}} \mu^k_{ij}$.
+\end{enumerate}
+From \cite[Theorem 2]{akbarzadeh2020conditions}, in an indexable problem, for state $\sigma^k$, there exists a state $j\in[n]$ such that $N_j^{\pi^k\setminus\{\sigma^k\}}\neq N_j^{\pi^k}$. Now, suppose that for any active state $i\in\pi^k$, there exists $j\in[n]$ such that $N_j^{\pi^k\setminus\{i\}}\neq N_j^{\pi^k}$. Using Sherman-Morrison formula, we have\footnote{the expression of $D^{\pi\setminus\{i\}}$ and $N^{\pi\setminus\{i\}}$ given by Equation~$(18)$ in \cite{akbarzadeh2020conditions} are erroneous.}
+\begin{align*}
+    &D^{\pi^k\setminus\{i\}} -D^{\pi^k} = -\frac{(1-\beta)\delta_i +\tilde{\Delta}_iD^{\pi^k}}{1+\tilde{\Delta}_i[(I-\beta P^{\pi^k})^{-1}]_{\colon i}}[(I-\beta P^{\pi^k})^{-1}]_{\colon i}, \\
+    &\quad \text{and}\quad N^{\pi^k\setminus\{i\}} -N^{\pi^k} = -\frac{(1-\beta) +\tilde{\Delta}_iN^{\pi^k}}{1+\tilde{\Delta}_i[(I-\beta P^{\pi^k})^{-1}]_{\colon i}}[(I-\beta P^{\pi^k})^{-1}]_{\colon i}.
+\end{align*}
+Then, for any $j\in[n]$ such that $N_j^{\pi^k\setminus\{i\}}\neq N_j^{\pi^k}$, $\mu^k_{ij}=\displaystyle\frac{(1-\beta)\delta_i +\tilde{\Delta}_iD^{\pi^k}}{(1-\beta) +\tilde{\Delta}_iN^{\pi^k}}$ which does not depend on $j$.
+Then, we simply have ${\mu^k_i=\displaystyle\frac{(1-\beta)\delta_i +\tilde{\Delta}_iD^{\pi^k}}{(1-\beta) +\tilde{\Delta}_iN^{\pi^k}}}$. %=\frac{\tilde{\Delta}_i((1-\beta)\bu^{\pi^k}(\mu^k_i)+\mu_i^kN^{\pi^k})}{\tilde{\Delta}_iN^{\pi^k}}$.
+Also, we have 
+\begin{align*}
+    \tilde{\Delta}_iN^{\pi^k}&=(1-\beta)\tilde{\Delta}_i(I-\beta P^{\pi^k})^{-1}\bpi^k=-(1-\beta)y^k_i \quad\text{and}\\
+    \tilde{\Delta}_iD^{\pi^k}&={(1-\beta)\tilde{\Delta}_i\bu^{\pi^k}(\mu^{k-1}_{\min}) +\mu^{k-1}_{\min}\tilde{\Delta}_i N^{\pi^k}} =(1-\beta)z^{k-1}_i -(1-\beta)\mu^{k-1}_{\min}y^k_i.
+\end{align*}
+So, replacing these terms in $\mu^k_i$, we get the formula given at Line~\ref{algo2:muki}.
+
+Note that the algorithm of \cite{akbarzadeh2020conditions} was only developed for the discounted case.  Our approach for the time-average reward case is different because we use the average gain and bias instead of directly the expected discounted total reward $D^{\pi^k}$ and total number of activations $N^{\pi^k}$ under policy $\pi^k$. Moreover, our code is also optimized to avoid unnecessary computation and to reduce memory usage. Finally, the way we do the update of our matrix $X$ makes it possible to obtain a subcubic algorithm whereas their approach does not (see also below).
+
+% We would like to emphasize that while developing the expressions in \cite{akbarzadeh2020conditions} gives the same expression of $\mu^k_i$ as ours, the authors in \cite{akbarzadeh2020conditions} use a different approach.
+% \BG{what is different exactly?} For instance, our algorithm is initially developed for non-discounted restless bandit and extended to discounted case. In contrast, the algorithm in \cite{akbarzadeh2020conditions} is designed for discounted restless bandit and no explicit expression is given for the non-discounted case. Last but not least, we rely on the geometry of bias vector or value function in order to develop the expression of $\mu^k_i$. In \cite{akbarzadeh2020conditions}, $\mu^k_i$ is calculated based on the expected discounted total reward $D^{\pi^k}$ and total number of activations $N^{\pi^k}$ under policy $\pi^k$. These two vectors are explicit only for discounted case, $\beta<1$.
+% For non-discounted case, $\beta=1$, one needs to use average reward per time step and average number of activations per time step instead of expected discounted total reward $D$ and number of activations $N$ respectively.
+% As done in vector $\bv$, one can denote two vectors such that the first component stores the average reward and number of activations per time step respectively. Each of these vectors verifies a system of linear equations as $\bv$ does in \eqref{eq:pre_lin_eq}. Solving these systems and replacing the expressions of average reward and number of activations per time step in $\mu^k_i$, one will find exactly the same expression of $\mu^k_i$ as given at Line~\ref{algo2:muki}. 
+
+\subsection{Comparison with  algorithm of \cite{nino2020fast}} The algorithm \cite{nino2020fast}  had the best complexity up to date, there is a square matrix $\bff{A}$ that plays a similar role as the square matrix $X$ in our proposed algorithm. The most costly operations in the algorithm of \cite{nino2020fast} is to update their matrix $\bff{A}$ at each iteration and it is done by Equation~\eqref{eq:update_X_naif} that we recall here (using the same notation $\bff{A}$ as in their paper):
+\begin{align}
+    \label{eq:15}
+    \text{for } i,j\in\pi^k,\ \bff{A}^k_{ij}= \bff{A}^{k-1}_{ij} -\frac{\bff{A}^{k-1}_{i\sigma^k}}{\bff{A}^{k-1}_{\sigma^k\sigma^k}}\bff{A}^{k-1}_{\sigma^kj}.
+\end{align}
+This incurs a total complexity of $(2/3)n^3+O(n^2)$ arithmetic operations.
+As mentioned in Section~\ref{ssec:two_third_algo}, if we updated $X^k$ as given by \eqref{eq:update_X_naif}, our algorithm would also have a $(2/3)n^3+O(n^2)$ complexity but this version of the update cannot be optimized by using  fast matrix multiplication.
+
+\subsection{The approach of \cite{akbarzadeh2020conditions,nino2020fast} cannot be directly transformed into a subcubic algorithm}
+\label{apx:eq_15}
+
+In addition to all the previously cited differences, one of the major contribution of our algorithm with respect to \cite{akbarzadeh2020conditions,nino2020fast} is that the most advanced version of our algorithm runs in a subcubic time. The approach\footnote{Equation~(18) of \cite{akbarzadeh2020conditions}, which is central to their algorithm is the same as the above equation \eqref{eq:15}.} used  in \cite{akbarzadeh2020conditions,nino2020fast} is to update the full matrix $X^k$ at iteration $k$, by using \eqref{eq:15}.  This idea is represented in Figure~\ref{fig:apx_fast_mm}(a): for a given $\ell$, their algorithm compute $X^\ell_{\colon\sigma^k}$ for all $k$ (i.e., the full vertical lines represented by arrows).  Our first Subroutine~\ref{algo:update_X} uses an horizontal approach based on \eqref{eq:X^ell+1-i}, which we recall here:
+\begin{align*}
+    %\label{APX_eq:X^ell+1-i}
+    X^{\ell+1}_{i\sigma^k} &= X^{\ell}_{i\sigma^k} - \frac{X^{\ell}_{i\sigma^\ell} X^{\ell}_{{\sigma^\ell} \sigma^k}}{1+X^{\ell}_{{\sigma^\ell\sigma^\ell}}}.
+\end{align*}
+At iteration $k$, we use $X^{1}_{\colon \sigma^k}$ to compute all values of $X^\ell_{\colon\sigma^k}$ up to $\ell=k+1$.  This is represented in Figure~\ref{fig:apx_fast_mm}(b).  Our approach can be used to obtain the subcubic algorithm illustrated in Figure~\ref{fig:apx_fast_mm}(c) by using subcubic algorithms for multiplication.
+
+
+\begin{figure}[ht]
+    \centering
+    \begin{tabular}{ccc}
+        \begin{tikzpicture}[scale=0.17, shorten >=2pt]
+            \draw (0,0) edge[->] (22,0);
+            \draw (0,0) edge[->] (0,22);
+            \node at (21,1) {$\ell$};
+            \node at (-1.5,21) {$\sigma^k$};
+            \foreach \i in {0,...,20} \draw[fill,red!60] (\i,\i) rectangle (\i+1,\i+1);
+            \foreach \i in {0}{
+               \draw[fill,blue,opacity=0.5] (\i,\i+1) rectangle (\i+1,21);
+               \foreach \j in {1,...,19}{
+                   \fill[black,opacity=0.3] (\i+\j,\i+\j+1) rectangle (\i+\j+1,\i+21);
+               }
+            }
+            \foreach \i in {1,...,19}{
+                \draw (\i+0.5,\i+0.5) edge[->] (\i+0.5,21);
+            }
+            %\node at (0,-1) {}; % to have the same vertical size as the right figure. 
+            % \foreach \j in {1,...,6}{
+            %     \foreach \k in {\j,...,6}{
+            %         \draw (\j+0.5,\k+0.5) edge[->] (\j-0.7,\k+0.5) (\j+0.5,\k+0.5) edge[->] (\j-0.5,\k-0.5);
+            %     }
+            % }
+            % \node at (6,9) {$\udots$};
+            % \node at (3,9) {$\vdots$};
+        \end{tikzpicture}
+        &
+        \begin{tikzpicture}[scale=0.17, shorten >=2pt]
+            \draw (0,0) edge[->] (22,0);
+            \draw (0,0) edge[->] (0,22);
+            \node at (21,1) {$\ell$};
+            \node at (-1.5,21) {$\sigma^k$};
+            \foreach \i in {0,...,20} \draw[fill,red!60] (\i,\i) rectangle (\i+1,\i+1);
+            \foreach \i in {0}{
+               \draw[fill,blue,opacity=0.5] (\i,\i+1) rectangle (\i+1,21);
+               \foreach \j in {1,...,19}{
+                   \fill[black,opacity=0.3] (\i+\j,\i+\j+1) rectangle (\i+\j+1,\i+21);
+               }
+            }
+            \foreach \i in {2,...,20}{
+                \draw (1,\i+0.5) edge[->] (\i,\i+0.5);
+            }
+            %\node at (0,-1) {}; % to have the same vertical size as the right figure. 
+            % \foreach \j in {1,...,6}{
+            %     \foreach \k in {\j,...,6}{
+            %         \draw (\j+0.5,\k+0.5) edge[->] (\j-0.7,\k+0.5) (\j+0.5,\k+0.5) edge[->] (\j-0.5,\k-0.5);
+            %     }
+            % }
+            % \node at (6,9) {$\udots$};
+            % \node at (3,9) {$\vdots$};
+        \end{tikzpicture}
+        &
+        \begin{tikzpicture}[scale=0.17, shorten >=2pt]
+            \draw (0,0) edge[->] (22,0);
+            \draw (0,0) edge[->] (0,22);
+            \node at (21,1) {$\ell$};
+            \node at (-1.5,21) {$\sigma^k$};
+            \foreach \i in {0,...,20} \draw[fill,red!60] (\i,\i) rectangle (\i+1,\i+1);
+            \foreach \i in {0,5,10,15}{
+               \draw[fill,blue,opacity=0.5] (\i,\i+1) rectangle (\i+1,21);
+               \foreach \j in {1,...,5}{
+                   \fill[black,opacity=0.3] (\i+\j,\i+\j+1) rectangle (\i+\j+1,\i+6);
+                }
+                \foreach \j in {2,...,5}{
+                    \draw (\i+1,\i+\j+0.5) edge[->] (\i+\j,\i+\j+0.5);
+                }
+            }
+            \draw (11,11) edge[<->] node[below] {$K$} (16,11);
+            \draw (16,11) edge[<->] node[right] {$K$} (16,16);
+            \node at (-1.5,6) {$K$}; \draw[dotted] (-.5,6) -- (5.5,6);
+            \node at (-1.5,11) {$2K$}; \draw[dotted] (-.5,11) -- (10,11);
+            \node at (-1.5,16) {$\vdots$};
+        \end{tikzpicture} \\
+        (a) Algorithms of \cite{akbarzadeh2020conditions,nino2020fast} use \eqref{eq:15}.
+        &(b) Subroutine~\ref{algo:update_X}.
+        &(c) Subroutine~\ref{algo:FMM}.
+    \end{tabular}
+    \caption{Comparison of the implementation of \eqref{eq:15} used in \cite{akbarzadeh2020restless,nino2020fast} with Subroutine~\ref{algo:update_X} and Subroutine~\ref{algo:FMM}. }
+    \label{fig:apx_fast_mm}
+\end{figure}
+
+
+This  leads to the next fundamental  question: {why should the computation of Whittle index be harder than matrix inversion (or multiplication)?} To us, the main difference is that when computing Whittle indices, the permutation $\sigma$ is not known a priori but is discovered as the algorithm progresses: $\sigma^k$ is only known at iteration $k$. Hence, while all terms of the matrices $X^k_{ij}$ are not needed, it is difficult to know a priori which ones are needed and which ones are not. Hence, a simple divide and conquer algorithm cannot be used. This is why when recomputing $X^k$ in Subroutine~\ref{algo:FMM}, we recompute the whole matrix (the vertical blue line) and not just the part that  will be used to compute the gray zone: we do not know \emph{a priori} what part of $X^k_{ij}$ will be useful or not.
+
+
+\end{document}

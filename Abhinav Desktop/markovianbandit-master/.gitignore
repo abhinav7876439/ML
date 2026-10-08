@@ -1,0 +1,8 @@
+publish_on_pipy.sh
+.ipynb_checkpoints/
+tmp/
+src/markovianbandit_pkg.egg-info/
+__pycache__/
+*~
+dist/
+

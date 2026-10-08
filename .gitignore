@@ -1,0 +1,25 @@
+# Virtual Environments
+venv/
+venv310/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code settings
+.vscode/
+
+# Logs
+*.log
+cplex.log
+clone*.log
+
+# Large Media & Archives (Blocks video, zip, large pdfs)
+*.mp4
+*.zip
+*.png
+*.jpg
+*.pdf

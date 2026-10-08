@@ -1,0 +1,4 @@
+D=0, a=1.5: Suboptimality (Q1=-98.109, Median=-97.935, Q3=-97.766), Idleness=100.00%
+D=0, a=2.0: Suboptimality (Q1=-98.314, Median=-98.159, Q3=-98.001), Idleness=100.00%
+D=10, a=1.5: Suboptimality (Q1=-98.100, Median=-97.944, Q3=-97.793), Idleness=100.00%
+D=10, a=2.0: Suboptimality (Q1=-98.312, Median=-98.166, Q3=-98.026), Idleness=100.00%

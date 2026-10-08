@@ -1,0 +1,22 @@
+test:
+  stage: test
+  image: python:3.8-slim
+  tags: [ci.inria.fr, small]
+  script:
+    - python -m pip install --upgrade pip
+    - pip install pytest numpy scipy numba
+    - pytest
+
+benchmark:
+  stage: deploy
+  artifacts:
+    name: "$CI_JOB_NAME"
+    paths:
+      - benchmark.txt
+  needs: ["test"]
+  image: python:3.8-slim
+  tags: [ci.inria.fr, small]
+  script:
+    - python -m pip install --upgrade pip
+    - pip install numpy scipy numba
+    - python tests/benchmark.py > benchmark.txt

@@ -1,0 +1,260 @@
+
+import numpy as np
+import pandas as pd
+import markovianbandit as bandit
+
+
+# Model Parameters
+max_inventory = 15
+inventory_levels = list(range(max_inventory + 1))
+a_prev_values = [0, 1]  # 0 = Idle, 1 = Producing
+actions = [0, 1]        # 0 = passive, 1 = active
+states = [(i, ap) for i in inventory_levels for ap in a_prev_values]
+state_index = {s: idx for idx, s in enumerate(states)}
+nS = len(states)
+
+# Reference state for RVI normalization
+reference_state = (0, 1)
+ref_idx = state_index[reference_state]
+
+
+# Cost and rate parameters
+h, p, l = 1.0, 2.0, 5.0
+gamma, lam, mu = 0.1, 0.6, 0.8
+switch_cost = 0.0   # Even an arbitrarily small switching cost forces unichain behavior
+tau = 0.05
+
+
+# Transition Dynamics
+def get_rates(i, a):
+    r_up = mu if a == 1 else 0.0
+    r_down = lam + gamma * i
+    return r_up, r_down
+
+def transitions_ctmc(state, action, tau=tau):
+    i, _ = state
+    r_up, r_down = get_rates(i, action)
+    R = r_up + r_down
+
+    if R < 1e-12:
+        return {(i, action): 1.0}
+
+    trans = {}
+
+    p_event = 1.0 - np.exp(-R * tau)   # Probability at least one event happens in time τ
+    p_up = (r_up / R) * p_event if R > 0 else 0.0
+    p_down = (r_down / R) * p_event if R > 0 else 0.0
+    p_stay = 1.0 - p_event
+
+    i_up = min(i + 1, max_inventory)
+    i_down = max(i - 1, 0)
+
+    trans[(i_up, action)] = trans.get((i_up, action), 0.0) + p_up
+    trans[(i_down, action)] = trans.get((i_down, action), 0.0) + p_down
+    trans[(i, action)] = trans.get((i, action), 0.0) + p_stay
+
+    return trans
+
+# =========================
+# Build Base Model
+# =========================
+def build_base_model(tau=tau):
+    P_base = {}
+    C_base = np.zeros((nS, 2))
+    for s_idx, (i, ap) in enumerate(states):
+        base_op = h * i + p * gamma * i
+        if i == 0:
+            base_op += l * lam * tau
+        for ac in actions:
+            trans = transitions_ctmc((i, ap), ac, tau)
+            P_base[(s_idx, ac)] = {state_index[s2]: prob for s2, prob in trans.items()}
+            C_base[s_idx, ac] = base_op + (switch_cost if ac != ap else 0.0)
+    return P_base, C_base
+
+# =========================
+# Relative Value Iteration
+# =========================
+def relative_value_iteration(P, C_base, w, ref_idx,
+                             tol=1e-8, max_iter=10000, V_init=None, verbose=False):
+    nS = len(states)
+    V = np.zeros(nS) if V_init is None else np.array(V_init, dtype=float).copy()
+    if V.shape[0] != nS:
+        V = np.zeros(nS)
+
+    # Subsidy for passive action
+    C_sub = C_base.copy()
+    C_sub[:, 0] -= w
+
+    for it in range(max_iter):
+        V_old = V.copy()
+        Q = np.zeros((nS, 2))
+        for si in range(nS):
+            for a in actions:
+                Q[si, a] = C_sub[si, a] + sum(prob * V_old[sj] for sj, prob in P[(si, a)].items())
+
+        V_tilde = np.min(Q, axis=1)
+        rho = V_tilde[ref_idx]
+        V = V_tilde - rho
+
+        delta = np.max(np.abs(V - V_old))
+        if verbose and (it % 500 == 0 or delta < tol):
+            print(f"RVI iter {it}, delta={delta:.3e}, rho~={rho:.6f}")
+        if delta < tol:
+            break
+
+    # Final Q and policy
+    Q = np.zeros((nS, 2))
+    for si in range(nS):
+        for a in actions:
+            Q[si, a] = C_sub[si, a] + sum(p * V[sj] for sj, p in P[(si, a)].items())
+    policy = np.argmin(Q, axis=1)
+    return V, policy, Q, rho, it
+
+# =========================
+# Finite-Horizon Relative DP
+# =========================
+def finite_horizon_relative(P, C_base, T, ref_idx, minimize=True):
+    nS = len(states)
+    nA = len(actions)
+    V_prev = np.zeros(nS)
+    results = []
+    for t in range(1, T + 1):
+        Q = np.zeros((nS, nA))
+        for si in range(nS):
+            for a in actions:
+                Q[si, a] = C_base[si, a] + sum(p * V_prev[sj] for sj, p in P[(si, a)].items())
+        if minimize:
+            V_t = np.min(Q, axis=1)
+            policy_t = np.argmin(Q, axis=1)
+        else:
+            V_t = np.max(Q, axis=1)
+            policy_t = np.argmax(Q, axis=1)
+        g_t = V_t[ref_idx] - V_prev[ref_idx]
+        V_tilde = V_t - t * g_t
+        results.append({"t": t, "g_t": g_t, "V_t": V_t.copy(), "V_tilde": V_tilde.copy(), "policy_t": policy_t.copy()})
+        V_prev = V_t.copy()
+    return results
+
+# =========================
+# Action Gap Δ_w(s)
+# =========================
+def action_gap(P, C_base, w, s_idx, ref_idx, V_init=None):
+    V, policy, Q, rho, _ = relative_value_iteration(P, C_base, w, ref_idx, V_init=V_init)
+    return Q[s_idx, 1] - Q[s_idx, 0], V
+
+# =========================
+# Scan over w
+# =========================
+def scan_over_w(w_values, tau=1.0, tol=1e-8, warm_start=True, verbose=True):
+    P_base, C_base = build_base_model(tau)
+    Pb_by_w, policy_by_w, Q_by_w, rho_by_w = {}, {}, {}, {}
+    V_warm = None
+    for w in sorted(w_values):
+        V_init = V_warm if (warm_start and V_warm is not None) else None
+        V, policy, Q, rho, iterations = relative_value_iteration(P_base, C_base, w, ref_idx,
+                                                                 tol=tol, max_iter=20000, V_init=V_init,
+                                                                 verbose=verbose)
+        Pb = set(si for si in range(nS) if policy[si] == 0)
+        Pb_by_w[w] = Pb
+        policy_by_w[w] = policy.copy()
+        Q_by_w[w] = Q.copy()
+        rho_by_w[w] = rho
+        V_warm = V.copy()
+        if verbose:
+            print(f"w={w:.4f}, rho={rho:.6f}, |Pb|={len(Pb)}, iterations={iterations}")
+    return Pb_by_w, policy_by_w, Q_by_w, rho_by_w
+
+# =========================
+# Whittle Index Computations
+# =========================
+def compute_whittle_indices_from_grid(Pb_by_w, w_values):
+    whittle = {}
+    for si in range(nS):
+        whittle[si] = next((w for w in sorted(w_values) if si in Pb_by_w[w]), np.inf)
+    return whittle
+
+def whittle_index_bisection(state_idx, w_low=-10, w_high=10, tol_w=1e-6,
+                            max_iter=50, tau=1.0):
+    low, high = w_low, w_high
+    V_warm = None
+    for _ in range(max_iter):
+        mid = 0.5 * (low + high)
+        P_base, C_base = build_base_model(tau)
+        V_mid, policy_mid, Q_mid, rho_mid, _ = relative_value_iteration(P_base, C_base, mid, ref_idx,
+                                                                         V_init=V_warm)
+        best_action = policy_mid[state_idx]
+        V_warm = V_mid.copy()
+        if best_action == 0:
+            high = mid
+        else:
+            low = mid
+        if abs(high - low) < tol_w:
+            break
+    return 0.5 * (low + high)
+
+def compute_whittle_indices_bisection(w_low=-10, w_high=10, tol_w=1e-6, tau=1.0):
+    whittle = {}
+    for s_idx in range(nS):
+        W = whittle_index_bisection(
+            state_idx=s_idx,
+            w_low=w_low,
+            w_high=w_high,
+            tol_w=tol_w,
+            max_iter=50,   # explicitly integer
+            tau=tau
+        )
+        whittle[s_idx] = W
+    return whittle
+
+
+# =========================
+# Package Matrix Extraction
+# =========================
+def extract_P0_P1_R0_R1():
+    w = 0
+    P_dict, C_dict = build_base_model(tau)
+    P0 = np.zeros((nS, nS))
+    P1 = np.zeros((nS, nS))
+    R0 = np.zeros(nS)
+    R1 = np.zeros(nS)
+    for si in range(nS):
+        for sj, prob in P_dict.get((si, 0), {}).items():
+            P0[si, sj] = prob
+        R0[si] = -C_dict[si, 0]
+        for sj, prob in P_dict.get((si, 1), {}).items():
+            P1[si, sj] = prob
+        R1[si] = -C_dict[si, 1]
+    P0 /= P0.sum(axis=1, keepdims=True)
+    P1 /= P1.sum(axis=1, keepdims=True)
+    return P0, P1, R0, R1
+
+# =========================
+# Compute all indices and compare
+# =========================
+def compute_all_whittle_indices(tau=1.0):
+    # Grid-based
+    w_values = np.linspace(-2, 2, 11)
+    Pb_by_w, policy_by_w, Q_by_w, rho_by_w = scan_over_w(w_values, tau=tau)
+    whittle_grid = compute_whittle_indices_from_grid(Pb_by_w, w_values)
+    # Bisection
+    whittle_bisect = compute_whittle_indices_bisection(w_low=-10, w_high=10, tau=tau)
+    # Package
+    P0, P1, R0, R1 = extract_P0_P1_R0_R1()
+    model_pkg = bandit.restless_bandit_from_P0P1_R0R1(P0=P0, P1=P1, R0=R0, R1=R1)
+    pkg_indices = model_pkg.whittle_indices()
+    pkg_indices_dict = {i: pkg_indices[i] for i in range(len(pkg_indices))}
+    # Print comparison
+    print(f"{'State':>10} | {'Grid':>10} | {'Bisection':>10} | {'Package':>10}")
+    print("-"*55)
+    for s_idx in range(nS):
+        print(f"{str(states[s_idx]):>10} | "
+              f"{whittle_grid[s_idx]:>10.6f} | "
+              f"{whittle_bisect[s_idx]:>10.6f} | "
+              f"{pkg_indices_dict[s_idx]:>10.6f}")
+    return whittle_grid, whittle_bisect, pkg_indices_dict
+
+# =========================
+# Run full comparison
+# =========================
+if __name__ == "__main__":
+    whittle_grid, whittle_bisect, pkg_indices_dict = compute_all_whittle_indices()

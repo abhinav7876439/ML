@@ -1,0 +1,14 @@
+Transition Matrices Initialized.
+Sample P0 Transition Matrix:
+[[0.00481988 0.99518012 0.        ]
+ [0.11869555 0.         0.88130445]
+ [1.         0.         0.        ]]
+Sample P1 Transition Matrix:
+[[1. 0. 0.]
+ [1. 0. 0.]
+ [1. 0. 0.]]
+Reward Matrices Initialized: D=10, a=0.5.
+Sample R0 Reward Matrix:
+[-0.04068665 -1.00196019 -8.44143001]
+Sample R1 Reward Matrix:
+[-16.88286002 -16.88286002 -16.88286002]

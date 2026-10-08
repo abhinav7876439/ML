@@ -1,0 +1,4 @@
+Date and Time: 2026-10-08 23:05:11
+Alpha: 0.2
+Whittle Indices: [-0.5  0.5  1.  -1. ]
+

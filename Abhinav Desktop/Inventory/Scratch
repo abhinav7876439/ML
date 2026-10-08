@@ -1,0 +1,638 @@
+import numpy as np
+import pandas as pd
+import markovianbandit as bandit
+
+
+
+
+
+# Model Parameters
+max_inventory = 15
+inventory_levels = list(range(max_inventory + 1))
+a_prev_values = [0, 1]      # 0 = Idle, 1 = Producing
+actions = [0, 1]            # 0 = passive, 1 = active
+states = [(i, ap) for i in inventory_levels for ap in a_prev_values]
+state_index = {s: idx for idx, s in enumerate(states)}
+nS = len(states)
+
+# Reference state for RVI normalization
+reference_state = (0, 1)
+ref_idx = state_index[reference_state]
+
+# Cost and Rate Parameters
+h, p, l = 1.0, 2.0, 5.0
+gamma, lam, mu = 0.1, 0.6, 0.8
+switch_cost = 0.0
+tau = 1.0
+
+
+# Transition Dynamics
+def get_rates(i, a):
+    """Continuous-time rates for up (production) and down (demand + perish)"""
+    r_up = mu if a == 1 else 0.0
+    r_down = lam + gamma * i
+    return r_up, r_down
+
+def transitions_ctmc(state, action, tau=1.0):
+    """Small-time-step CTMC transitions. Next state's a_prev = current action"""
+    i, _ = state
+    r_up, r_down = get_rates(i, action)
+    R = r_up + r_down
+
+    if R <= 1e-12:
+        return {(i, action): 1.0}
+
+    p_event = 1.0 - np.exp(-R * tau)
+    p_up = (r_up / R) * p_event
+    p_down = (r_down / R) * p_event
+    p_stay = 1.0 - p_event
+
+    trans = {}
+    s_up = (min(i + 1, max_inventory), action)
+    trans[s_up] = trans.get(s_up, 0.0) + p_up
+    s_down = (max(i - 1, 0), action)
+    trans[s_down] = trans.get(s_down, 0.0) + p_down
+    s_stay = (i, action)
+    trans[s_stay] = trans.get(s_stay, 0.0) + p_stay
+
+    return trans
+
+
+
+# Build Model
+def build_base_model(tau):
+    """Builds transition dict and base cost matrix (without subsidy)"""
+    P_base = {}
+    C_base = np.zeros((nS, 2))
+
+    for s_idx, (i, ap) in enumerate(states):
+        # Base operational cost
+        base_op = (h * i) + (p * gamma * i)
+        if i == 0:
+            base_op += l * lam * tau
+
+        for ac in actions:
+            trans = transitions_ctmc((i, ap), ac, tau=tau)
+            # Map transitions to state indices
+            P_base[(s_idx, ac)] = {state_index[s2]: prob for s2, prob in trans.items()}
+            # Add switching cost if action changes
+            cost = base_op + (switch_cost if ac != ap else 0.0)
+            C_base[s_idx, ac] = cost
+
+    return P_base, C_base
+
+
+# Relative Value Iteration (RVI)
+def relative_value_iteration(P, C_base, w, ref_idx,
+                             tol=1e-8, max_iter=10000, V_init=None, verbose=False):
+    """
+    Solve subsidized average-cost MDP using RVI.
+    Subsidy w is applied to passive action (a=0).
+    """
+    nS = len(states)
+    if V_init is None:
+        V = np.zeros(nS)
+    else:
+        V = np.array(V_init, dtype=float).copy()
+        if V.shape[0] != nS:
+            V = np.zeros(nS)
+
+    # Apply subsidy
+    C_sub = C_base.copy()
+    C_sub[:, 0] -= w
+
+    for it in range(1, max_iter + 1):
+        V_old = V.copy()
+        Q = np.full((nS, 2), np.inf)
+
+
+        for si in range(nS):
+            for a in actions:
+                Q[si, a] = C_sub[si, a] + sum(prob * V_old[sj] for sj, prob in P[(si, a)].items())
+
+        # Bellman update
+        V_tilde = np.min(Q, axis=1)
+
+        # Relative normalization
+        rho = V_tilde[ref_idx]
+        V = V_tilde - rho
+
+        delta = np.max(np.abs(V - V_old))
+        if verbose and (it % 500 == 0 or delta < tol):
+            print(f"RVI iter {it}, delta={delta:.3e}, rho~={rho:.6f}")
+        if delta < tol:
+            break
+
+    # Recompute final Q and policy
+    Q = np.zeros((nS, 2))
+    for si in range(nS):
+        for a in actions:
+            Q[si, a] = C_sub[si, a] + sum(p * V[sj] for sj, p in P[(si, a)].items())
+    policy = np.argmin(Q, axis=1)
+
+    return V, policy, Q, rho, it
+
+
+# Finite-Horizon Relative DP
+def finite_horizon_relative(P, C_base, T, ref_idx, minimize=True):
+    """
+    Perform finite-horizon relative dynamic programming.
+
+    Parameters
+    ----------
+    P : dict
+        Transition probabilities, P[(state_idx, action)] -> {next_state_idx: prob}
+    C_base : ndarray
+        Cost matrix, shape (nS, nA)
+    T : int
+        Horizon length
+    ref_idx : int
+        Reference state for relative normalization
+    minimize : bool
+        True for cost minimization, False for reward maximization
+
+    Returns
+    -------
+    results : list of dicts
+        Each dict contains:
+            't' : time step
+            'g_t' : average incremental cost
+            'V_t' : value function at step t
+            'V_tilde' : relative normalized value
+            'policy_t' : optimal policy at step t
+    """
+    nS = len(states)
+    nA = len(actions)
+    V_prev = np.zeros(nS)  # initialize value function
+    results = []
+
+    for t in range(1, T + 1):
+        Q = np.full((nS, nA), np.inf)  # Q-matrix for current step
+
+        # Compute one-step Q-values
+        for si in range(nS):
+            for a in actions:
+                Q[si, a] = C_base[si, a] + sum(p * V_prev[sj] for sj, p in P[(si, a)].items())
+
+        # Compute optimal value and policy
+        if minimize:
+            V_t = np.min(Q, axis=1)
+            policy_t = np.argmin(Q, axis=1)
+        else:
+            V_t = np.max(Q, axis=1)
+            policy_t = np.argmax(Q, axis=1)
+
+        # Compute incremental cost (like rho in infinite-horizon RVI)
+        g_t = V_t[ref_idx] - V_prev[ref_idx]
+
+        # Relative normalization (span semi-norm idea)
+        V_tilde = V_t - t * g_t
+
+        # Store results
+        results.append({
+            "t": t,
+            "g_t": g_t,
+            "V_t": V_t.copy(),
+            "V_tilde": V_tilde.copy(),
+            "policy_t": policy_t.copy()
+        })
+
+        # Prepare for next step
+        V_prev = V_t.copy()
+
+    return results
+
+
+
+
+
+# Extract Policy
+def extract_policy(w, tau_val=1.0):
+    """Extract optimal policy table for subsidy w"""
+    P_base, C_base = build_base_model(tau_val)
+    V, policy, Q, rho, iterations = relative_value_iteration(P_base, C_base, w, ref_idx)
+    policy_table = pd.DataFrame({
+        "state": states,
+        "optimal_action": policy
+    })
+    return policy_table
+
+
+
+
+# Scan Over Subsidy w
+def scan_over_w(w_values, tau=1.0, tol=1e-8, warm_start=True, verbose=True):
+    """
+    Scan over grid of subsidy values w, run RVI, record policies and Pb(w)
+    """
+    P_base, C_base = build_base_model(tau=tau)
+
+    Pb_by_w = {}
+    policy_by_w = {}
+    Q_by_w = {}
+    rho_by_w = {}
+
+    V_warm = None
+
+    for w in sorted(w_values):
+        V_init = V_warm if (warm_start and V_warm is not None) else None
+
+        V, policy, Q, rho, iterations = relative_value_iteration(
+            P_base, C_base, w, ref_idx, tol=tol, max_iter=20000, V_init=V_init, verbose=verbose
+        )
+
+        Pb = set(si for si in range(nS) if policy[si] == 0)
+
+        Pb_by_w[w] = Pb
+        policy_by_w[w] = policy.copy()
+        Q_by_w[w] = Q.copy()
+        rho_by_w[w] = rho
+        V_warm = V.copy()  # warm-start next w
+
+        if verbose:
+            print(f"w={w:.4f}, rho={rho:.6f}, |Pb|={len(Pb)}, iterations={iterations}")
+
+    return Pb_by_w, policy_by_w, Q_by_w, rho_by_w
+
+
+
+# To check indexability, for what value of w, Q(i,a_(t-1)=0, a_t=0) = Q(i,a_(t-1)=0, a_t=1) and Q(i,a_(t-1)=1, a_t=0) = Q(i,a_(t-1)=1, a_t=1)
+w_values = np.linspace(-2, 2, 11)
+Pb_by_w, policy_by_w, Q_by_w, rho_by_w = scan_over_w(w_values)
+
+print(f"Scanned Pb(w) for w in {w_values}")
+
+for i, w_i in enumerate(w_values):
+    print(f"\n----- For w = {w_i} (idx {i}) -----")
+    print(f"Pb({w_i}): {Pb_by_w[w_i]}")
+    print(f"policy at w={w_i}:\n{policy_by_w[w_i]}")
+    print(f"rho at w={w_i}: {rho_by_w[w_i]}")
+    print(f"Q at w={w_i}:\n{Q_by_w[w_i]}")
+
+
+
+# Compute Whittle Indices from Grid
+def compute_whittle_indices_from_grid(Pb_by_w, w_values):
+    """
+    Compute Whittle index for each state as the smallest subsidy w
+    where the state enters the passive set Pb(w)
+    """
+    whittle = {}
+    sorted_w = sorted(w_values)
+    for si in range(nS):
+        found = False
+        for w in sorted_w:
+            if si in Pb_by_w[w]:
+                whittle[si] = w
+                found = True
+                break
+        if not found:
+            whittle[si] = np.inf
+    return whittle
+
+
+# Example Usage
+w_values = np.linspace(-2, 2, 11)
+
+Pb_by_w, policy_by_w, Q_by_w, rho_by_w = scan_over_w(
+    w_values, tau=1.0, tol=1e-8, warm_start=True, verbose=True
+)
+
+whittle_indices = compute_whittle_indices_from_grid(Pb_by_w, w_values)
+print("\nWhittle Indices for all states using grid-based method:")
+for s_idx, w in whittle_indices.items():
+    print(f"State {states[s_idx]}: Whittle index = {w}")
+
+
+
+# Monotonicity & Whittle extraction
+def check_monotonicity(Pb_by_w, w_values):
+    """
+    Check whether Pb(w_i) subset of Pb(w_{i+1}) for increasing w_values
+    Returns boolean and list of violations (tuples)
+    """
+    is_indexable = True
+    violations = []
+    sorted_w = sorted(w_values)
+    for i in range(len(sorted_w) - 1):
+        w1 = sorted_w[i]
+        w2 = sorted_w[i + 1]
+        Pb1 = Pb_by_w[w1]
+        Pb2 = Pb_by_w[w2]
+        if not Pb1.issubset(Pb2):
+            is_indexable = False
+            missing = Pb1 - Pb2
+            violations.append((w1, w2, missing))
+    return is_indexable, violations
+
+
+
+# ========== COMPARISON: RVI vs Finite-Horizon Relative DP ==========
+def compare_rvi_vs_finite_horizon(P_base, C_base, w, ref_idx, T=10000, verbose=True):
+    """
+    Compare RVI (infinite-horizon) vs Finite-Horizon Relative DP
+    
+    Parameters
+    ----------
+    P_base : dict
+        Transition probabilities
+    C_base : ndarray
+        Base cost matrix
+    w : float
+        Subsidy for passive action
+    ref_idx : int
+        Reference state index
+    T : int
+        Horizon for finite-horizon algorithm
+    verbose : bool
+        Print detailed comparison
+    
+    Returns
+    -------
+    comparison_df : DataFrame
+        Detailed state-by-state comparison
+    summary : dict
+        Summary statistics
+    """
+    
+    # Run RVI (infinite-horizon)
+    V_inf, policy_inf, Q_inf, rho_inf, iter_inf = relative_value_iteration(
+        P_base, C_base, w, ref_idx, verbose=False
+    )
+    
+    # Run finite-horizon DP
+    results_fh = finite_horizon_relative(P_base, C_base, T, ref_idx, minimize=True)
+    
+    # Extract final finite-horizon policy
+    policy_fh = results_fh[-1]["policy_t"]
+    g_fh = results_fh[-1]["g_t"]  # Average incremental cost at horizon T
+    
+    # Create comparison dataframe
+    comparison_data = []
+    for si in range(nS):
+        s = states[si]
+        i, ap = s
+        
+        # Q-values
+        Q_inf_0, Q_inf_1 = Q_inf[si, 0], Q_inf[si, 1]
+        Q_fh = results_fh[-1]["V_t"]
+        Q_fh_0 = C_base[si, 0] - w + sum(p * Q_fh[sj] for sj, p in P_base[(si, 0)].items())
+        Q_fh_1 = C_base[si, 1] + sum(p * Q_fh[sj] for sj, p in P_base[(si, 1)].items())
+        
+        policy_match = "✓" if policy_inf[si] == policy_fh[si] else "✗"
+        
+        comparison_data.append({
+            "state": s,
+            "i": i,
+            "prev_action": ap,
+            "policy_RVI": policy_inf[si],
+            "policy_FH": policy_fh[si],
+            "match": policy_match,
+            "Q_RVI_passive": Q_inf_0,
+            "Q_RVI_active": Q_inf_1,
+            "Q_FH_passive": Q_fh_0,
+            "Q_FH_active": Q_fh_1,
+            "V_RVI": V_inf[si],
+            "V_FH": Q_fh[si],
+        })
+    
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    # Summary statistics
+    policy_agreement = np.mean(policy_inf == policy_fh) * 100
+    policy_diffs = np.sum(policy_inf != policy_fh)
+    
+    summary = {
+        "w": w,
+        "T_horizon": T,
+        "rho_RVI (avg cost)": rho_inf,
+        "g_T_FH (at T={})".format(T): g_fh,
+        "avg_cost_diff": abs(rho_inf - g_fh),
+        "policy_agreement_%": policy_agreement,
+        "policy_disagreements": policy_diffs,
+        "RVI_iterations": iter_inf,
+        "passive_states_RVI": np.sum(policy_inf == 0),
+        "passive_states_FH": np.sum(policy_fh == 0),
+    }
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"COMPARISON: RVI vs Finite-Horizon DP (T={T})")
+        print(f"{'='*80}")
+        print(f"Subsidy w = {w}")
+        print(f"\nAverage Cost (long-term):")
+        print(f"  RVI (infinite-horizon):    rho = {rho_inf:.6f}")
+        print(f"  Finite-Horizon (T={T}):     g_T = {g_fh:.6f}")
+        print(f"  Difference:                 {abs(rho_inf - g_fh):.6f}")
+        print(f"\nPolicy Comparison:")
+        print(f"  Agreement:                  {policy_agreement:.2f}%")
+        print(f"  Disagreements:              {policy_diffs} states")
+        print(f"  Passive states (RVI):       {np.sum(policy_inf == 0)} / {nS}")
+        print(f"  Passive states (FH):        {np.sum(policy_fh == 0)} / {nS}")
+        print(f"\nAlgorithm Stats:")
+        print(f"  RVI iterations:             {iter_inf}")
+        print(f"\n{'State':<15} {'RVI':<8} {'FH':<8} {'Match':<8} {'Q_RVI_0':<12} {'Q_RVI_1':<12} {'Q_FH_0':<12} {'Q_FH_1':<12}")
+        print(f"{'-'*100}")
+        for _, row in comparison_df.iterrows():
+            print(f"{str(row['state']):<15} {row['policy_RVI']:<8} {row['policy_FH']:<8} "
+                  f"{row['match']:<8} {row['Q_RVI_passive']:<12.4f} {row['Q_RVI_active']:<12.4f} "
+                  f"{row['Q_FH_passive']:<12.4f} {row['Q_FH_active']:<12.4f}")
+    
+    return comparison_df, summary
+
+
+# ========== RUN COMPARISON ==========
+# Build model
+P_base, C_base = build_base_model(tau=1.0)
+
+# Test at different subsidies
+test_w_values = [-1000, -2.0, -1.8, -1.6, 0.0, 0.2, 0.4, 0.5, 1.0, 1.2, 1.4, 2.0, 1000]
+all_summaries = []
+
+for w_test in test_w_values:
+    comp_df, summary = compare_rvi_vs_finite_horizon(
+        P_base, C_base, w=w_test, ref_idx=ref_idx, verbose=True
+    )
+    all_summaries.append(summary)
+
+# Summary table
+print(f"\n\n{'='*80}")
+print("SUMMARY ACROSS DIFFERENT SUBSIDIES")
+print(f"{'='*80}")
+summary_table = pd.DataFrame(all_summaries)
+print(summary_table.to_string(index=False))
+
+
+
+def extract_P0_P1_R0_R1():
+    """
+    Build numeric transition matrices P0 (passive) and P1 (active),
+    and reward vectors R0,R1 (package expects rewards).
+    Assumes build_model(w, tau) returns (P, c) where:
+      - P[(si,a)] -> dict of {sj: prob}
+      - c[(si,a)] -> scalar cost
+    """
+
+    P_dict, c_dict = build_base_model(tau=tau)
+
+    # initialize numeric matrices
+    P0 = np.zeros((nS, nS), dtype=float)
+    P1 = np.zeros((nS, nS), dtype=float)
+    c_passive = np.zeros(nS, dtype=float)
+    c_active = np.zeros(nS, dtype=float)
+
+
+    for si in range(nS):
+        # passive (action=0)
+        trans0 = P_dict.get((si, 0), {})
+        for sj, prob in trans0.items():
+            P0[si, sj] = prob
+        c_passive[si] = c_dict[(si, 0)]
+
+        # active (action=1)
+        trans1 = P_dict.get((si, 1), {})
+        for sj, prob in trans1.items():
+            P1[si, sj] = prob
+        c_active[si] = c_dict[(si, 1)]
+
+    # sanity: small numerical fixes for rows that are nearly but not exactly 1
+    row_sums0 = P0.sum(axis=1)
+    row_sums1 = P1.sum(axis=1)
+
+    # If any row sum deviates by tiny epsilon, normalize to 1.0
+    eps = 1e-12
+    for i in range(nS):
+        if abs(row_sums0[i] - 1.0) > eps and row_sums0[i] > 0:
+            P0[i, :] /= row_sums0[i]
+        if abs(row_sums1[i] - 1.0) > eps and row_sums1[i] > 0:
+            P1[i, :] /= row_sums1[i]
+
+    # Convert costs to rewards expected by package (reward = -cost)
+    R0 = -c_passive.copy()
+    R1 = -c_active.copy()
+
+    # quick sanity prints
+    print("extract_P0_P1_R0_R1: shapes ->", P0.shape, P1.shape, R0.shape, R1.shape)
+    print("Row-sum stats: P0 min/max =", row_sums0.min(), "/", row_sums0.max(),
+          " P1 min/max =", row_sums1.min(), "/", row_sums1.max())
+
+    return P0, P1, R0, R1
+
+
+# --- PACKAGE COMPARISON BLOCK (INDENTED CORRECTLY) ---
+P0, P1, R0, R1 = extract_P0_P1_R0_R1( )
+model_pkg = bandit.restless_bandit_from_P0P1_R0R1(
+        P0=P0, P1=P1, R0=R0, R1=R1
+    )
+
+
+print("Whittle indices (package):")
+pkg_indices = model_pkg.whittle_indices()
+print(pkg_indices)
+
+pkg_indices_dict = {i: pkg_indices[i] for i in range(len(pkg_indices))}
+
+
+
+
+
+
+# Bisection-based Whittle index (continuous)
+def whittle_index_bisection(state_idx,
+                            w_low=-10.0,
+                            w_high=10.0,
+                            tol_w=1e-6,
+                            max_iter=40,
+                            tau=1.0,
+                            rvi_tol=1e-8,
+                            rvi_max_iter=5000):
+    """
+    Compute Whittle index for a specific state using bisection.
+    Assumes indexability: as w increases, passive becomes more attractive.
+    We warm-start RVI across bisection iterations using last V.
+    """
+
+    # Evaluate at endpoints to see if they are on different sides
+    P_low, c_low = build_base_model(tau=tau)
+    V_low, policy_low, Q_low, rho_low, _ = relative_value_iteration(P_low, c_low, ref_idx, tol=rvi_tol, max_iter=rvi_max_iter)
+    opt_low = int(policy_low[state_idx])
+    print(f"w_low={w_low}, optimal action={opt_low}")
+
+    P_high, c_high = build_base_model(tau=tau)
+    V_high, policy_high, Q_high, rho_high, _ = relative_value_iteration(P_high, c_high, ref_idx, tol=rvi_tol, max_iter=rvi_max_iter)
+    opt_high = int(policy_high[state_idx])
+    print(f"w_high={w_high}, optimal action={opt_high}")
+
+
+
+    # If both endpoints result in same optimal action, we try to expand the bracket a bit
+    if opt_low == opt_high:       # If the same action is optimal at both ends, then the true Whittle index is not inside the bracket
+        # expand outwards progressively
+        factor = 2.0
+        expanded = False
+        for _ in range(6):
+            w_low = w_low * factor
+            w_high = w_high * factor
+            P_low, c_low = build_base_model(tau=tau)
+            V_low, policy_low, Q_low, rho_low, _ = relative_value_iteration(P_low, c_low, ref_idx, tol=rvi_tol, max_iter=rvi_max_iter)
+            P_high, c_high = build_base_model(tau=tau)
+            V_high, policy_high, Q_high, rho_high, _ = relative_value_iteration(P_high, c_high, ref_idx, tol=rvi_tol, max_iter=rvi_max_iter)
+            if int(policy_low[state_idx]) != int(policy_high[state_idx]):
+                expanded = True
+                break
+        if not expanded:
+            # No bracket found; return np.inf indicating index not found in reasonable range
+            return np.inf
+
+    # Now run bisection Warm-start using last V computed for midpoints
+    V_warm = None
+    low = w_low
+    high = w_high
+
+    for it in range(max_iter):
+        mid = 0.5 * (low + high)
+        P_mid, c_mid = build_base_model(tau=tau)
+        V_mid, policy_mid, Q_mid, rho_mid, _ = relative_value_iteration(P_mid, c_mid, ref_idx, tol=rvi_tol, max_iter=rvi_max_iter, V_init=V_warm)
+        best_action = int(policy_mid[state_idx])
+
+        if best_action == 0:
+            # passive optimal at mid: true index is >= mid => move high down
+            # If at mid, passive is optimal → true Whittle index is higher → move left boundary up. If active is optimal → true index is lower → move right boundary down.
+            high = mid
+        else:
+            # active optimal at mid => true index is <= mid => move low up
+            low = mid
+
+        V_warm = V_mid.copy()
+        if abs(high - low) < tol_w:
+            break
+
+    return 0.5 * (low + high)
+
+
+
+
+def compute_whittle_indices_bisection(w_low=-10, w_high=10, tol_w=1e-6, tau=1.0):
+    whittle = {}
+    for s_idx in range(nS):
+        W = whittle_index_bisection(state_idx=s_idx, w_low=w_low, w_high=w_high, tol_w=tol_w, tau=tau)
+        whittle[s_idx] = W
+        print(f"State {states[s_idx]} → Whittle index = {W}")
+    return whittle
+
+
+
+
+
+
+print("\nWhittle indices (Bisection RVI):")
+my_indices = compute_whittle_indices_bisection(
+        w_low=-10, w_high=10, tol_w=1e-6, tau=1.0
+    )
+
+print("\nComparison: package vs your RVI indices")
+for s in my_indices:
+    print(
+        f"State {s}:   package = {pkg_indices_dict[s]:.6f}, "
+        f"   yours = {my_indices[s]:.6f},   diff = {abs(pkg_indices_dict[s] - my_indices[s]):.6e}"
+            )

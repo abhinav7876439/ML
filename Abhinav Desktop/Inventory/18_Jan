@@ -1,0 +1,332 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import markovianbandit as bandit
+
+# -------------------------
+# 1. Global Model Parameters
+# -------------------------
+max_inventory = 15
+inventory_levels = list(range(max_inventory + 1))
+a_prev_values = [0, 1]      # 0 = was Idle, 1 = was Producing
+actions = [0, 1]            # 0 = passive, 1 = active
+states = [(i, ap) for i in inventory_levels for ap in a_prev_values]
+state_index = {s: idx for idx, s in enumerate(states)}
+nS = len(states)
+
+# Reference state for normalization: (0 inventory, was producing)
+reference_state = (0, 1)
+ref_idx = state_index[reference_state]
+
+# Cost and Rate Parameters
+h, p, l = 1.0, 2.0, 5.0
+gamma, lam, mu = 0.1, 0.6, 0.8
+switch_cost = 3.0
+tau = 1.0
+
+# -------------------------
+# 2. Transition Dynamics
+# -------------------------
+def get_rates(i, a):
+    r_up = mu if a == 1 else 0.0
+    r_down = lam + (gamma * i)
+    return r_up, r_down
+
+def transitions_ctmc(state, action, tau=1.0):
+    """Next state's a_prev is the current action."""
+    i, _ = state
+    r_up, r_down = get_rates(i, action)
+    R = r_up + r_down
+
+    if R <= 1e-12:
+        return {(i, action): 1.0}
+
+    p_event = 1.0 - np.exp(-R * tau)
+    p_up = (r_up / R) * p_event
+    p_down = (r_down / R) * p_event
+    p_stay = 1.0 - p_event
+
+    trans = {}
+    # Up move
+    s_up = (min(i + 1, max_inventory), action)
+    trans[s_up] = trans.get(s_up, 0.0) + p_up
+    # Down move
+    s_down = (max(i - 1, 0), action)
+    trans[s_down] = trans.get(s_down, 0.0) + p_down
+    # Stay
+    s_stay = (i, action)
+    trans[s_stay] = trans.get(s_stay, 0.0) + p_stay
+    
+    return trans
+
+# -------------------------
+# 3. Model Building Logic
+# -------------------------
+def build_base_model(tau_val=1.0):
+    """Builds transition dict and base cost matrix."""
+    P_base = {}
+    C_base = np.zeros((nS, 2))
+    
+    for s_idx, (i, ap) in enumerate(states):
+        # Operational base costs
+        base_op = (h * i) + (p * gamma * i)
+        if i == 0:
+            base_op += l * lam * tau_val
+            
+        for ac in actions:
+            trans = transitions_ctmc((i, ap), ac, tau=tau_val)
+            P_base[(s_idx, ac)] = {state_index[s2]: prob for s2, prob in trans.items()}
+            
+            # Action-dependent switching cost
+            cost = base_op + (switch_cost if ac != ap else 0.0)
+            C_base[s_idx, ac] = cost
+            
+    return P_base, C_base
+
+# -------------------------
+# 4. RVI and Indices
+# -------------------------
+def relative_value_iteration(P, C_base, w, ref_idx, tol=1e-8, max_iter=10000, V_init=None):
+    V = np.zeros(nS) if V_init is None else V_init.copy()
+    C_subsidy = C_base.copy()
+    C_subsidy[:, 0] -= w  # Passive action gets subsidy w
+    
+    for it in range(1, max_iter + 1):
+        V_old = V.copy()
+        Q = np.zeros((nS, 2))
+        
+        for si in range(nS):
+            for a in actions:
+                Q[si, a] = C_subsidy[si, a] + sum(prob * V_old[sj] for sj, prob in P[(si, a)].items())
+        
+        V_new = np.min(Q, axis=1)
+        rho = V_new[ref_idx]
+        V = V_new - rho
+        
+        if np.max(np.abs(V - V_old)) < tol:
+            break
+            
+    policy = np.argmin(Q, axis=1)
+    return V, policy, Q, rho, it
+
+def whittle_index_bisection(s_idx, P, C_base, w_low=-50.0, w_high=50.0, tol_w=1e-5):
+    low, high = w_low, w_high
+    V_warm = None
+    
+    for _ in range(40):
+        mid = 0.5 * (low + high)
+        V, _, Q, _, _ = relative_value_iteration(P, C_base, mid, ref_idx, V_init=V_warm)
+        
+        # If Q[0] < Q[1], Passive is better (subsidy too high)
+        if Q[s_idx, 0] < Q[s_idx, 1]:
+            high = mid
+        else:
+            low = mid
+        V_warm = V.copy()
+        if abs(high - low) < tol_w: break
+            
+    return 0.5 * (low + high)
+
+def compute_all_whittle_bisection():
+    P, C_base = build_base_model()
+    indices = np.zeros(nS)
+    for i in range(nS):
+        indices[i] = whittle_index_bisection(i, P, C_base)
+    return indices
+
+
+
+# -------------------------
+# 5. Policy and Scan Functions
+# -------------------------
+def extract_policy(w):
+    """
+    Computes the optimal policy for a specific subsidy w.
+    """
+    P, C_base = build_base_model()
+    # Note: relative_value_iteration internally applies subsidy w to action 0
+    V, policy, Q, rho, iterations = relative_value_iteration(P, C_base, w, ref_idx)
+    
+    policy_table = pd.DataFrame({
+        "state": states,
+        "optimal_action": policy,
+        "Q_passive": Q[:, 0],
+        "Q_active": Q[:, 1]
+    })
+    return policy_table
+
+def scan_over_w(w_values):
+    """
+    Returns dictionaries mapping w to various metrics for indexability analysis.
+    """
+    P, C_base = build_base_model()
+    Pb_by_w = {}
+    policy_by_w = {}
+    Q_by_w = {}
+    rho_by_w = {}
+    
+    V_warm = None
+    for w in sorted(w_values):
+        V, policy, Q, rho, _ = relative_value_iteration(P, C_base, w, ref_idx, V_init=V_warm)
+        V_warm = V.copy()
+        
+        Pb_by_w[w] = set(si for si in range(nS) if policy[si] == 0)
+        policy_by_w[w] = policy
+        Q_by_w[w] = Q
+        rho_by_w[w] = rho
+        
+    return Pb_by_w, policy_by_w, Q_by_w, rho_by_w
+
+
+# -------------------------
+# 5. Model Export
+# -------------------------
+def extract_P0_P1_R0_R1(custom_switch_cost=None):
+    """Converts the model into standard reward matrices (Reward = -Cost)."""
+    # Temporarily override switch cost if needed
+    current_sc = switch_cost if custom_switch_cost is None else custom_switch_cost
+    
+    P_dict, C_mat = build_base_model() 
+
+    P0 = np.zeros((nS, nS))
+    P1 = np.zeros((nS, nS))
+    
+    for si in range(nS):
+        for sj, prob in P_dict[(si, 0)].items(): P0[si, sj] = prob
+        for sj, prob in P_dict[(si, 1)].items(): P1[si, sj] = prob
+
+    # Row normalization fix
+    for P in [P0, P1]:
+        sums = P.sum(axis=1)
+        P[sums > 0] /= sums[sums > 0, np.newaxis]
+
+    return P0, P1, -C_mat[:, 0], -C_mat[:, 1]
+
+
+
+# # -------------------------
+# # 6. Execution
+# # -------------------------
+# if __name__ == "__main__":
+#     P, C_base = build_base_model()
+    
+#     print("Computing Whittle Indices via Bisection...")
+#     manual_w = compute_all_whittle_bisection()
+    
+#     # Print results for a subset of states
+#     print(f"{'State (Inv, Prev)':<20} | {'Whittle Index':<15}")
+#     print("-" * 40)
+#     for i in [0, 1, 10, 11, 30, 31]: # Sample indices
+#         if i < nS:
+#             print(f"{str(states[i]):<20} | {manual_w[i]:.4f}")
+
+#     # Optional: Integration with external bandit package
+#     try:
+#         import markovianbandit as bandit
+#         P0, P1, R0, R1 = extract_P0_P1_R0_R1(custom_switch_cost=0.0)
+#         model = bandit.restless_bandit_from_P0P1_R0R1(P0, P1, R0, R1)
+#         pkg_whittle = model.whittle_indices()
+#         print("\nPackage Whittle Index for State 0:", pkg_whittle[0])
+#     except ImportError:
+#         print("\n'markovianbandit' package not found. Skipping comparison.")
+
+
+
+import numpy as np
+import pandas as pd
+import markovianbandit as bandit
+
+# ---------------------------------------------------------
+# 1. Setup & Matrix Extraction
+# ---------------------------------------------------------
+
+# Re-running the extraction to ensure R0 and R1 are ready
+P0, P1, R0, R1 = extract_P0_P1_R0_R1()
+
+def compute_all_three_methods():
+    # --- Method 1: Grid Scan (Approximate) ---
+    w_grid = np.linspace(-10, 20, 301) # 0.1 resolution
+    Pb_by_w, _, _, _ = scan_over_w(w_grid)
+    grid_indices = compute_whittle_indices_from_grid(Pb_by_w, w_grid)
+
+    # --- Method 2: Manual Bisection (Precise) ---
+    P_dict, C_base = build_base_model()
+    bisection_indices = np.zeros(nS)
+    for i in range(nS):
+        bisection_indices[i] = whittle_index_bisection(i, P_dict, C_base)
+
+    # --- Method 3: Package (markovianbandit) ---
+    model = bandit.restless_bandit_from_P0P1_R0R1(P0, P1, R0, R1)
+    package_indices = model.whittle_indices()
+
+    # --- Consolidation into Table ---
+    data = []
+    for i in range(nS):
+        inv, ap = states[i]
+        prev_label = "Producing" if ap == 1 else "Idle"
+        data.append({
+            "State_Idx": i,
+            "Inventory": inv,
+            "Prev_Action": prev_label,
+            "Grid_Method": grid_indices[i],
+            "Bisection_Method": bisection_indices[i],
+            "Package_Method": package_indices[i]
+        })
+    
+    return pd.DataFrame(data)
+
+# ---------------------------------------------------------
+# 2. Execution and Display
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    final_table = compute_all_three_methods()
+    
+    print("\n" + "="*95)
+    print(f"{'WHITTLE INDICES FOR ALL 32 STATES':^95}")
+    print("="*95)
+    
+    # Configure pandas to show all 32 rows
+    pd.set_option('display.max_rows', 32)
+    pd.set_option('display.float_format', '{:.4f}'.format)
+    
+    # Displaying the table
+    print(final_table.to_string(index=False))
+
+
+
+# -------------------------
+# 6. Updated Execution Block
+# -------------------------
+if __name__ == "__main__":
+    # 1. Compute Whittle Indices for ALL states
+    print("Computing Whittle Indices for ALL states via Bisection...")
+    all_whittle_indices = compute_all_whittle_bisection()
+    
+    results_df = pd.DataFrame({
+        "State_Tuple": states,
+        "Whittle_Index": all_whittle_indices
+    })
+    print("\n--- Whittle Indices for All States ---")
+    print(results_df.to_string()) # Use .to_string() to show all rows
+
+    # 2. Extract policy for a specific value of w
+    target_w = 0.5
+    print(f"\n--- Optimal Policy for w = {target_w} ---")
+    print(extract_policy(target_w))
+
+    # 3. Scan over a range of w to check indexability
+    w_values = np.linspace(-2, 2, 11)
+    Pb_by_w, policy_by_w, Q_by_w, rho_by_w = scan_over_w(w_values)
+
+    print(f"\nScanned Pb(w) for w in {w_values}")
+
+    for i, w_i in enumerate(w_values):
+        print(f"\n{'='*20} For w = {w_i:.2f} (idx {i}) {'='*20}")
+        print(f"Passive Set Pb (State Indices): {Pb_by_w[w_i]}")
+        print(f"Long-run average cost (rho): {rho_by_w[w_i]:.6f}")
+        
+        # Displaying a small slice of Q-values for brevity
+        q_df = pd.DataFrame(Q_by_w[w_i], columns=["Q_Passive", "Q_Active"], index=states)
+        print("\nSample of Q-Values and Policy:")
+        print(q_df.head(10))

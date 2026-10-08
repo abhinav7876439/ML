@@ -1,0 +1,14 @@
+*~
+tmp.py*
+__pycache__/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.out
+*.log
+*.fls
+main.pdf
+main.synctex.gz
+.ipynb_checkpoints/
+./figures/illustrate_vf_3.pdf
