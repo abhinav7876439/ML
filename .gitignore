@@ -17,7 +17,12 @@ __pycache__/
 cplex.log
 clone*.log
 
-# Large Media & Archives (Blocks video, zip, large pdfs)
+# Large generated outputs (GitHub 100MB limit)
+Lab/*_results_*.txt
+Restart_output_results/
+output_*.csv
+
+# Large Media & Archives
 *.mp4
 *.zip
 *.png
