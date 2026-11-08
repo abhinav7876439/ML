@@ -18,7 +18,7 @@ cplex.log
 clone*.log
 
 # Large generated outputs (GitHub 100MB limit)
-Lab/*_results_*.txt
+Lab/*results*.txt
 Restart_output_results/
 output_*.csv
 
