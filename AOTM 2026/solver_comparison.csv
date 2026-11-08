@@ -1,0 +1,16 @@
+model,solver,status,obj,time_s
+M1 max-cover p=15 | NDD (400 km),cplex,optimal,69.71856276817464,0.195
+M1 max-cover p=15 | NDD (400 km),gurobi,optimal,69.71856276817464,0.112
+M1 max-cover p=15 | NDD (400 km),scip,optimal,69.71856276817464,0.274
+M1 max-cover p=15 | NDD (400 km),cbc,optimal,69.71856276817464,0.385
+M1 max-cover p=15 | NDD (400 km),highs,optimal,69.71856276817464,0.336
+M2 set-cover | NDD (400 km),cplex,optimal,100.0,0.135
+M2 set-cover | NDD (400 km),gurobi,optimal,100.0,0.062
+M2 set-cover | NDD (400 km),scip,optimal,100.0,0.146
+M2 set-cover | NDD (400 km),cbc,optimal,100.0,0.226
+M2 set-cover | NDD (400 km),highs,optimal,100.0,0.101
+M3 p-median p=15 | no radius limit (coverage shown for 400 km),cplex,optimal,16679583519.560337,32.822
+M3 p-median p=15 | no radius limit (coverage shown for 400 km),gurobi,optimal,16679583519.560337,18.553
+M3 p-median p=15 | no radius limit (coverage shown for 400 km),scip,optimal,16679583519.560337,68.794
+M3 p-median p=15 | no radius limit (coverage shown for 400 km),cbc,maxTimeLimit,178544934538.98764,2830.97
+M3 p-median p=15 | no radius limit (coverage shown for 400 km),highs,optimal,16679583519.560337,35.614

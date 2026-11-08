@@ -9,8 +9,8 @@ model.x2 = Var(within=Reals,bounds=(0,float('inf')))
 
 # Objective: maximize total benefit
 model.obj = Objective(
-    expr=2 * model.x1 + 3 * model.x2,
-    sense=maximize
+    expr=4 * model.x1 + 5 * model.x2,
+    sense=minimize
 )
 
 # Constraint: select at most one project
@@ -20,10 +20,12 @@ model.obj = Objective(
 
 model.Constraints= ConstraintList()
 
-model.Constraints.add(model.x1<= 4000)
-model.Constraints.add(model.x2<= 3500)
-model.Constraints.add(model.x1+model.x2<= 5000)
-model.Constraints.add(model.x1+2*model.x2<= 8000)
+# model.Constraints.add(model.x1<= 4000)
+# model.Constraints.add(model.x2<= 3500)
+model.Constraints.add(model.x1+4*model.x2>= 5)
+model.Constraints.add(3*model.x1+2*model.x2>= 7)
+model.Constraints.add(model.x2<= 0)
+model.Constraints.add(model.x1>= 2)
 model.Constraints.add(model.x1>= 0)
 model.Constraints.add(model.x2>= 0)
 

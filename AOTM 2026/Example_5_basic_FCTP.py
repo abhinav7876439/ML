@@ -12,9 +12,7 @@ df_fixed = pd.read_csv('transportation_50x30_fixed_costs.csv')
 
 
 
-# df = pd.read_csv( r"C:\Users\abhin\Desktop\Abhi\AOTM 2026\transportation_50x30_balanced.csv")
 
-# df_fixed = pd.read_csv( r"C:\Users\abhin\Desktop\Abhi\AOTM 2026\transportation_50x30_fixed_costs.csv")
 
 fcost=df_fixed.iloc[0:50,1:31].values.tolist()
 #print(fcost)
@@ -74,7 +72,7 @@ for i in range(num_suppliers):
 # Define the objective function
 model.obj = Objective(expr=sum(objective_terms), sense=minimize)
 
-solver = SolverFactory('cplex')  # or 'gurobi', 'cbc', 'highs', 'scip', 'glpk'
+solver = SolverFactory('highs')  # or 'gurobi', 'cbc', 'highs', 'scip', 'glpk'
 
 # solver.options['limits/time'] = 60 #scip
 
